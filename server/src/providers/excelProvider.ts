@@ -13,6 +13,7 @@ import {
   FetchBatch,
   NormalizedSlowQuery,
 } from './types';
+import { readWorkbookWithEncoding } from '../utils/encoding';
 
 // ========== Excel Settings 类型 ==========
 
@@ -46,6 +47,8 @@ export interface ExcelSettings {
   originalFileName: string;
   /** 工作表名，为空则使用第一个 */
   sheetName?: string;
+  /** 文件编码（仅 CSV 有效），'auto' 或具体编码名如 'GBK'、'UTF-8' */
+  encoding?: string;
   /** 列映射配置 */
   columnMapping: ExcelColumnMapping;
 }
@@ -73,6 +76,7 @@ export const excelProvider: DataSourceProvider = {
       filePath: '',
       originalFileName: '',
       sheetName: '',
+      encoding: 'auto',
       columnMapping: {
         querySql: '',
         queryTime: '',
@@ -134,8 +138,8 @@ export const excelProvider: DataSourceProvider = {
     }
 
     try {
-      // 尝试读取文件并验证表头
-      const workbook = XLSX.readFile(s.filePath);
+      // 尝试读取文件并验证表头（使用编码感知方式）
+      const { workbook } = readWorkbookWithEncoding(s.filePath, s.encoding || 'auto');
       const sheetName = s.sheetName || workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
 
@@ -187,7 +191,7 @@ export const excelProvider: DataSourceProvider = {
       throw new Error(`文件不存在: ${s.originalFileName || s.filePath}`);
     }
 
-    const workbook = XLSX.readFile(s.filePath);
+    const { workbook } = readWorkbookWithEncoding(s.filePath, s.encoding || 'auto');
     const sheetName = s.sheetName || workbook.SheetNames[0];
     const sheet = workbook.Sheets[sheetName];
 

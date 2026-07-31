@@ -8,6 +8,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import * as XLSX from 'xlsx';
+import { readWorkbookWithEncoding, isCsvFile, detectFileEncoding, SUPPORTED_ENCODINGS } from '../utils/encoding';
 import {
   getProviderTypes,
   listDataSources,
@@ -29,6 +30,26 @@ if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }
 
+/**
+ * 修复 multer 文件名编码问题
+ * 浏览器上传文件时 Content-Disposition 中的文件名可能以 Latin-1 编码传输，
+ * 导致中文文件名在 Node.js 中变成乱码。尝试用 latin1→utf8 还原。
+ */
+function fixOriginalName(name: string): string {
+  try {
+    // 尝试 latin1 → utf8 转换
+    const restored = Buffer.from(name, 'latin1').toString('utf-8');
+    // 验证转换后是否是有效 UTF-8（包含中文或无乱码）
+    // 如果原本就是 ASCII/UTF-8 且无损，两者相同直接返回
+    if (restored === name) return name;
+    // 检查转换结果是否包含替换字符（无效的 UTF-8 序列）
+    if (restored.includes('\uFFFD')) return name;
+    return restored;
+  } catch {
+    return name;
+  }
+}
+
 // multer 配置：存储到 server/data/uploads/
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
@@ -37,7 +58,8 @@ const storage = multer.diskStorage({
   filename: (_req, file, cb) => {
     // 使用时间戳 + 原始文件名避免冲突
     const timestamp = Date.now();
-    const safeName = file.originalname.replace(/[^a-zA-Z0-9._\-\u4e00-\u9fa5]/g, '_');
+    const fixedName = fixOriginalName(file.originalname);
+    const safeName = fixedName.replace(/[^a-zA-Z0-9._\-\u4e00-\u9fa5]/g, '_');
     cb(null, `${timestamp}_${safeName}`);
   },
 });
@@ -47,7 +69,8 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 }, // 最大 50MB
   fileFilter: (_req, file, cb) => {
     const allowedExts = ['.xlsx', '.xls', '.csv'];
-    const ext = path.extname(file.originalname).toLowerCase();
+    const fixedName = fixOriginalName(file.originalname);
+    const ext = path.extname(fixedName).toLowerCase();
     if (allowedExts.includes(ext)) {
       cb(null, true);
     } else {
@@ -257,9 +280,18 @@ router.post('/fields', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/datasources/encodings
+ * 获取支持的编码列表
+ */
+router.get('/encodings', (_req: Request, res: Response) => {
+  res.json({ success: true, data: SUPPORTED_ENCODINGS });
+});
+
+/**
  * POST /api/datasources/upload
  * 上传 Excel/CSV 文件，返回存储路径和表头列名
  * 用于文件类数据源（如 Excel）的配置流程
+ * Body (multipart): file, encoding? (可选，指定编码，默认 auto)
  */
 router.post('/upload', upload.single('file'), (req: Request, res: Response) => {
   try {
@@ -269,10 +301,12 @@ router.post('/upload', upload.single('file'), (req: Request, res: Response) => {
     }
 
     const filePath = req.file.path;
-    const originalName = req.file.originalname;
+    const originalName = fixOriginalName(req.file.originalname);
+    // 从 multipart body 中获取编码参数（前端可在 FormData 中附带）
+    const encoding = (req.body.encoding as string) || 'auto';
 
-    // 解析 Excel 文件获取表头和工作表列表
-    const workbook = XLSX.readFile(filePath);
+    // 使用编码感知的方式解析文件
+    const { workbook, detectedEncoding } = readWorkbookWithEncoding(filePath, encoding);
     const sheetNames = workbook.SheetNames;
 
     // 默认读取第一个 sheet 的表头
@@ -301,6 +335,7 @@ router.post('/upload', upload.single('file'), (req: Request, res: Response) => {
         headers,
         previewRows,
         totalRows,
+        detectedEncoding: isCsvFile(filePath) ? detectedEncoding : undefined,
       },
     });
   } catch (error: unknown) {
@@ -311,12 +346,12 @@ router.post('/upload', upload.single('file'), (req: Request, res: Response) => {
 
 /**
  * POST /api/datasources/upload/headers
- * 获取已上传文件指定 sheet 的表头（切换 sheet 时调用）
- * Body: { filePath, sheetName }
+ * 获取已上传文件指定 sheet 的表头（切换 sheet 或编码时调用）
+ * Body: { filePath, sheetName, encoding? }
  */
 router.post('/upload/headers', (req: Request, res: Response) => {
   try {
-    const { filePath, sheetName } = req.body;
+    const { filePath, sheetName, encoding } = req.body;
     if (!filePath) {
       res.status(400).json({ success: false, error: '缺少 filePath' });
       return;
@@ -327,7 +362,8 @@ router.post('/upload/headers', (req: Request, res: Response) => {
       return;
     }
 
-    const workbook = XLSX.readFile(filePath);
+    // 使用编码感知的方式解析文件
+    const { workbook, detectedEncoding } = readWorkbookWithEncoding(filePath, encoding || 'auto');
     const targetSheet = sheetName || workbook.SheetNames[0];
     const sheet = workbook.Sheets[targetSheet];
 
@@ -349,7 +385,7 @@ router.post('/upload/headers', (req: Request, res: Response) => {
 
     res.json({
       success: true,
-      data: { headers, previewRows, totalRows },
+      data: { headers, previewRows, totalRows, detectedEncoding: isCsvFile(filePath) ? detectedEncoding : undefined },
     });
   } catch (error: unknown) {
     const err = error as Error;

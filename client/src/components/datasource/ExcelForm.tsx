@@ -1,11 +1,12 @@
 /**
  * Excel / CSV 数据源表单
- * 文件上传 + 列映射配置
+ * 文件上传 + 编码选择 + 列映射配置
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { DataSourceFormProps } from './formRegistry';
 import { dataSourceApi } from '../../api';
+import type { EncodingOption } from '../../api';
 import Select from '../Select';
 
 /** 列映射字段定义 */
@@ -22,6 +23,11 @@ const MAPPING_FIELDS = [
   { key: 'userHost', label: '用户主机', required: false },
 ] as const;
 
+/** 判断文件名是否为 CSV */
+function isCsvFileName(fileName: string): boolean {
+  return fileName.toLowerCase().endsWith('.csv');
+}
+
 export default function ExcelForm({ settings, onChange }: DataSourceFormProps) {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
@@ -29,8 +35,33 @@ export default function ExcelForm({ settings, onChange }: DataSourceFormProps) {
   const [previewRows, setPreviewRows] = useState<string[][]>(settings._previewRows as string[][] || []);
   const [sheetNames, setSheetNames] = useState<string[]>(settings._sheetNames as string[] || []);
   const [totalRows, setTotalRows] = useState<number>(settings._totalRows as number || 0);
+  const [encodingOptions, setEncodingOptions] = useState<EncodingOption[]>([]);
+  const [reloading, setReloading] = useState(false);
 
   const columnMapping = (settings.columnMapping || {}) as Record<string, string>;
+  const currentEncoding = (settings.encoding as string) || 'auto';
+  const isCsv = isCsvFileName((settings.originalFileName as string) || '');
+
+  // 加载编码选项列表
+  useEffect(() => {
+    dataSourceApi.getEncodings().then((res) => {
+      if (res.data.success) {
+        setEncodingOptions(res.data.data);
+      }
+    }).catch(() => {
+      // 降级使用内置列表
+      setEncodingOptions([
+        { value: 'auto', label: '自动检测' },
+        { value: 'UTF-8', label: 'UTF-8' },
+        { value: 'GBK', label: 'GBK（简体中文）' },
+        { value: 'GB2312', label: 'GB2312（简体中文）' },
+        { value: 'GB18030', label: 'GB18030（简体中文扩展）' },
+        { value: 'Big5', label: 'Big5（繁体中文）' },
+        { value: 'Shift_JIS', label: 'Shift_JIS（日文）' },
+        { value: 'EUC-KR', label: 'EUC-KR（韩文）' },
+      ]);
+    });
+  }, []);
 
   /** 处理文件上传 */
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -43,25 +74,26 @@ export default function ExcelForm({ settings, onChange }: DataSourceFormProps) {
     try {
       const formData = new FormData();
       formData.append('file', file);
+      // 上传时不指定编码，后端自动检测
+      formData.append('encoding', 'auto');
 
       const res = await dataSourceApi.upload(formData);
       if (res.data.success) {
-        const { filePath, originalFileName, headers: h, sheetNames: sheets, previewRows: preview, totalRows: rows } = res.data.data;
+        const { filePath, originalFileName, headers: h, sheetNames: sheets, previewRows: preview, totalRows: rows, detectedEncoding } = res.data.data;
 
         setHeaders(h);
         setPreviewRows(preview);
         setSheetNames(sheets);
         setTotalRows(rows);
 
-        // 更新 settings
+        // 更新 settings，包含检测到的编码
         onChange({
           ...settings,
           filePath,
           originalFileName,
           sheetName: sheets[0] || '',
-          // 保留已有的 columnMapping，但重置不匹配的列
+          encoding: detectedEncoding || 'auto',
           columnMapping: resetMappingForNewHeaders(columnMapping, h),
-          // 缓存解析结果供组件内部使用（不会存到后端）
           _parsedHeaders: h,
           _previewRows: preview,
           _sheetNames: sheets,
@@ -76,12 +108,47 @@ export default function ExcelForm({ settings, onChange }: DataSourceFormProps) {
     }
   }, [settings, onChange, columnMapping]);
 
+  /** 切换编码，重新解析文件 */
+  const handleEncodingChange = useCallback(async (encoding: string) => {
+    if (!settings.filePath) return;
+
+    // 先更新 settings 中的 encoding
+    onChange({ ...settings, encoding });
+
+    setReloading(true);
+    try {
+      const res = await dataSourceApi.uploadHeaders(
+        settings.filePath as string,
+        (settings.sheetName as string) || undefined,
+        encoding
+      );
+      if (res.data.success) {
+        const { headers: h, previewRows: preview, totalRows: rows } = res.data.data;
+        setHeaders(h);
+        setPreviewRows(preview);
+        setTotalRows(rows);
+        onChange({
+          ...settings,
+          encoding,
+          columnMapping: resetMappingForNewHeaders(columnMapping, h),
+          _parsedHeaders: h,
+          _previewRows: preview,
+          _totalRows: rows,
+        });
+      }
+    } catch {
+      // 静默处理
+    } finally {
+      setReloading(false);
+    }
+  }, [settings, onChange, columnMapping]);
+
   /** 切换 sheet */
   const handleSheetChange = useCallback(async (sheetName: string) => {
     if (!settings.filePath) return;
 
     try {
-      const res = await dataSourceApi.uploadHeaders(settings.filePath as string, sheetName);
+      const res = await dataSourceApi.uploadHeaders(settings.filePath as string, sheetName, currentEncoding);
       if (res.data.success) {
         const { headers: h, previewRows: preview, totalRows: rows } = res.data.data;
         setHeaders(h);
@@ -99,7 +166,7 @@ export default function ExcelForm({ settings, onChange }: DataSourceFormProps) {
     } catch {
       // 静默处理
     }
-  }, [settings, onChange, columnMapping]);
+  }, [settings, onChange, columnMapping, currentEncoding]);
 
   /** 更新列映射 */
   const handleMappingChange = useCallback((fieldKey: string, columnName: string) => {
@@ -139,6 +206,28 @@ export default function ExcelForm({ settings, onChange }: DataSourceFormProps) {
           <p className="text-xs text-red-500 mt-1">{uploadError}</p>
         )}
       </div>
+
+      {/* 编码选择（仅 CSV 文件显示） */}
+      {isCsv && Boolean(settings.filePath) && encodingOptions.length > 0 && (
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">
+            文件编码
+            {currentEncoding && currentEncoding !== 'auto' && (
+              <span className="ml-2 text-gray-400">（当前: {currentEncoding}）</span>
+            )}
+          </label>
+          <Select
+            value={currentEncoding}
+            onChange={handleEncodingChange}
+            options={encodingOptions.map((opt) => ({ value: opt.value, label: opt.label }))}
+            className="w-full"
+          />
+          {reloading && (
+            <p className="text-xs text-blue-500 mt-1">正在重新解析文件...</p>
+          )}
+          <p className="text-xs text-gray-400 mt-1">如果列名或数据显示乱码，请尝试切换编码格式</p>
+        </div>
+      )}
 
       {/* 工作表选择（多 sheet 时显示） */}
       {sheetNames.length > 1 && (

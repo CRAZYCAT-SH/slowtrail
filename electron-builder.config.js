@@ -23,7 +23,7 @@ module.exports = {
     'electron/dist/**/*',
   ],
 
-  // 打包额外资源（后端代码 + 前端构建产物）
+  // 打包额外资源（后端代码 + 前端构建产物 + 图标）
   extraResources: [
     {
       from: 'server/dist',
@@ -43,6 +43,14 @@ module.exports = {
       from: 'client/dist',
       to: 'client/dist',
       filter: ['**/*'],
+    },
+    {
+      from: 'build/icon.ico',
+      to: 'icon.ico',
+    },
+    {
+      from: 'build/icon.png',
+      to: 'icon.png',
     },
   ],
 

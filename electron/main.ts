@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Tray, Menu, nativeImage, shell, dialog } from 'electron';
 import type { NativeImage } from 'electron';
 import path from 'path';
+import fs from 'fs';
 import { spawn, ChildProcess } from 'child_process';
 import net from 'net';
 
@@ -185,24 +186,18 @@ function getIconPath(): string {
  */
 function getTrayIconPath(): string {
   if (isDev) {
-    // 开发模式：优先用 ico，没有则用 png
     const icoPath = path.join(__dirname, '../../build/icon.ico');
     const pngPath = path.join(__dirname, '../../build/icon.png');
-    try {
-      require('fs').accessSync(icoPath);
+    if (process.platform === 'win32' && fs.existsSync(icoPath)) {
       return icoPath;
-    } catch {
-      return pngPath;
     }
+    return pngPath;
   }
   // 打包模式
   if (process.platform === 'win32') {
     const icoPath = path.join(process.resourcesPath, 'icon.ico');
-    try {
-      require('fs').accessSync(icoPath);
+    if (fs.existsSync(icoPath)) {
       return icoPath;
-    } catch {
-      return path.join(process.resourcesPath, 'icon.png');
     }
   }
   return path.join(process.resourcesPath, 'icon.png');
@@ -213,27 +208,31 @@ function getTrayIconPath(): string {
  */
 function createTray(): void {
   const iconPath = getTrayIconPath();
+  console.log('[Tray] 图标路径:', iconPath, '存在:', fs.existsSync(iconPath));
+
   let trayIcon: NativeImage;
 
   try {
     trayIcon = nativeImage.createFromPath(iconPath);
     if (trayIcon.isEmpty()) {
+      console.warn('[Tray] 主图标为空，尝试回退');
       // 回退：尝试加载其他尺寸的 png
       const fallbackPath = isDev
         ? path.join(__dirname, '../../build/icon-32.png')
         : path.join(process.resourcesPath, 'icon.png');
       trayIcon = nativeImage.createFromPath(fallbackPath);
     }
-    // 系统托盘需要小尺寸图标，缩放到 16x16
-    if (!trayIcon.isEmpty()) {
+    // Windows 托盘图标推荐 16x16 或 32x32
+    if (!trayIcon.isEmpty() && process.platform === 'win32') {
       trayIcon = trayIcon.resize({ width: 16, height: 16 });
     }
-  } catch {
+  } catch (err) {
+    console.error('[Tray] 图标加载失败:', err);
     trayIcon = nativeImage.createEmpty();
   }
 
   tray = new Tray(trayIcon);
-  tray.setToolTip('SlowTrail - MySQL Slow Query Analyzer');
+  tray.setToolTip('SlowTrail - 慢 SQL 分析工具');
 
   const contextMenu = Menu.buildFromTemplate([
     {

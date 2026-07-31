@@ -64,6 +64,14 @@ export interface UploadResult {
   headers: string[];
   previewRows: string[][];
   totalRows: number;
+  /** 检测到的文件编码（仅 CSV 文件返回） */
+  detectedEncoding?: string;
+}
+
+/** 编码选项 */
+export interface EncodingOption {
+  value: string;
+  label: string;
 }
 
 export const dataSourceApi = {
@@ -93,9 +101,12 @@ export const dataSourceApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 120000,
     }),
-  /** 获取已上传文件指定 sheet 的表头 */
-  uploadHeaders: (filePath: string, sheetName?: string) =>
-    api.post<{ success: boolean; data: { headers: string[]; previewRows: string[][]; totalRows: number } }>('/datasources/upload/headers', { filePath, sheetName }),
+  /** 获取已上传文件指定 sheet 的表头（支持指定编码） */
+  uploadHeaders: (filePath: string, sheetName?: string, encoding?: string) =>
+    api.post<{ success: boolean; data: { headers: string[]; previewRows: string[][]; totalRows: number; detectedEncoding?: string } }>('/datasources/upload/headers', { filePath, sheetName, encoding }),
+  /** 获取支持的编码列表 */
+  getEncodings: () =>
+    api.get<{ success: boolean; data: EncodingOption[] }>('/datasources/encodings'),
 };
 
 // ========== 同步相关 ==========
