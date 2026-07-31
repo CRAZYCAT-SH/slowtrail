@@ -1,0 +1,50 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e1b4b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="fg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6c63ff"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+    <linearGradient id="fs" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6c63ff" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#06b6d4" stop-opacity="0.1"/>
+    </linearGradient>
+    <radialGradient id="fsh" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#6c63ff" stop-opacity="0.7"/>
+      <stop offset="70%" stop-color="#4338ca" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#1e1b4b" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <!-- 背景圆角矩形 -->
+  <rect width="256" height="256" rx="48" fill="url(#bg)"/>
+  <!-- 外圆弧 -->
+  <path d="M 128 28 A 100 100 0 1 1 28 128" stroke="url(#fg)" stroke-width="8" stroke-linecap="round" fill="none" filter="url(#glow)"/>
+  <!-- 中圈 -->
+  <circle cx="128" cy="128" r="70" stroke="url(#fg)" stroke-width="4" stroke-opacity="0.4" fill="none"/>
+  <!-- 内圈 -->
+  <circle cx="128" cy="128" r="40" stroke="url(#fg)" stroke-width="3" stroke-opacity="0.25" fill="none"/>
+  <!-- 扫描扇形 -->
+  <path d="M 128 128 L 214.6 78 A 100 100 0 0 0 178 40 Z" fill="url(#fs)"/>
+  <!-- 扫描线 -->
+  <line x1="128" y1="128" x2="214.6" y2="78" stroke="url(#fg)" stroke-width="5" stroke-linecap="round" stroke-opacity="0.9" filter="url(#glow)"/>
+  <!-- 中心点 -->
+  <circle cx="128" cy="128" r="12" fill="url(#fg)" filter="url(#glow)"/>
+  <!-- 目标点光晕 -->
+  <ellipse cx="175" cy="82" rx="20" ry="28" fill="url(#fsh)" transform="rotate(-20 175 82)"/>
+  <!-- 目标点 -->
+  <circle cx="175" cy="82" r="8" fill="#06b6d4" filter="url(#glow)"/>
+  <!-- 小数据点装饰 -->
+  <circle cx="90" cy="180" r="4" fill="#6c63ff" opacity="0.6"/>
+  <circle cx="160" cy="190" r="3" fill="#06b6d4" opacity="0.5"/>
+  <circle cx="70" cy="110" r="3.5" fill="#6c63ff" opacity="0.4"/>
+</svg>

@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+/* 自定义主题色 */
+@theme {
+  --color-primary: #6c63ff;
+  --color-primary-hover: #5a52d5;
+  --color-accent: #06b6d4;
+  --color-accent-hover: #0891b2;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 隐藏滚动条但保留滚动功能 */
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+html {
+  scrollbar-width: none;
+}
+
+/* Recharts tooltip 样式覆盖 */
+.recharts-tooltip-wrapper {
+  z-index: 100 !important;
+}
+
+/* 动画关键帧 */
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modalSlideIn {
+  from { opacity: 0; transform: translateY(-20px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
