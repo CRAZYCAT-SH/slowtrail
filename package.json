@@ -1,0 +1,37 @@
+{
+  "name": "slowtrail",
+  "version": "1.0.0",
+  "description": "星河逐影 (SlowTrail) - MySQL 慢 SQL 透视分析平台",
+  "private": true,
+  "main": "electron/dist/main.js",
+  "scripts": {
+    "dev": "concurrently --raw \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "npm run dev --prefix server",
+    "dev:client": "npm run dev --prefix client",
+    "dev:electron": "concurrently --raw \"npm run dev:server\" \"npm run dev:client\" \"npm run electron:wait\"",
+    "electron:wait": "node scripts/wait-then-electron.js",
+    "electron:dev": "electron electron/dist/main.js",
+    "build:server": "cd server && npm run build",
+    "build:client": "cd client && npm run build",
+    "build:electron": "tsc -p electron/tsconfig.json",
+    "build:all": "npm run build:server && npm run build:client && npm run build:electron",
+    "clean:release": "node scripts/clean-release.js",
+    "pack": "npm run clean:release && npm run build:all && electron-builder --dir --config electron-builder.config.js",
+    "dist": "npm run clean:release && npm run build:all && electron-builder --config electron-builder.config.js",
+    "dist:all": "npm run clean:release && npm run build:all && electron-builder --win --mac --linux --config electron-builder.config.js",
+    "dist:win": "npm run clean:release && npm run build:all && electron-builder --win --config electron-builder.config.js",
+    "dist:mac": "npm run clean:release && npm run build:all && electron-builder --mac --config electron-builder.config.js",
+    "dist:linux": "npm run clean:release && npm run build:all && electron-builder --linux --config electron-builder.config.js",
+    "docker:build": "docker compose build",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "concurrently": "^8.2.2",
+    "electron": "33.4.11",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.7.3",
+    "wait-on": "^8.0.1"
+  }
+}

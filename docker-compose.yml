@@ -1,0 +1,22 @@
+services:
+  slowtrail:
+    build: .
+    container_name: slowtrail
+    ports:
+      - "3000:3000"
+    volumes:
+      # 持久化 SQLite 数据库
+      - slowtrail-data:/app/server/data
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # 以下为可选的默认数据源配置（首次启动时生效）
+      # - ES_HOST=http://your-kibana-host:5601
+      # - ES_USERNAME=
+      # - ES_PASSWORD=
+      # - ES_PROXY_PATH=/api/console/proxy
+      # - ES_INDEX_PATTERN=mysql_slow_log-{YYYY}.{MM}.{DD}
+    restart: unless-stopped
+
+volumes:
+  slowtrail-data:

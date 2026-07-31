@@ -1,0 +1,33 @@
+# 依赖目录（构建时重新安装）
+node_modules
+server/node_modules
+client/node_modules
+
+# 构建产物
+server/dist
+client/dist
+
+# 数据文件
+server/data/*.db
+server/data/*.db.bak
+
+# 开发配置
+.env
+.env.local
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+.kiro
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 文档（非运行必要）
+README.md
+AGENTS.md
