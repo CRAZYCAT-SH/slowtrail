@@ -88,6 +88,7 @@ function createTables(database: Database): void {
       source_ref TEXT,
       synced_at INTEGER,
       record_count INTEGER,
+      trigger_type TEXT DEFAULT 'manual',
       UNIQUE(data_source_id, instance_name, sync_date)
     )
   `);
@@ -107,6 +108,24 @@ function createTables(database: Database): void {
       updated_at INTEGER
     )
   `);
+
+  // 定时同步任务表（与数据源 1:N 关系）
+  database.run(`
+    CREATE TABLE IF NOT EXISTS schedule_tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      data_source_id INTEGER NOT NULL,
+      instance_name TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      interval_minutes INTEGER NOT NULL DEFAULT 60,
+      days_offset INTEGER NOT NULL DEFAULT 0,
+      last_run_at INTEGER,
+      next_run_at INTEGER,
+      created_at INTEGER,
+      updated_at INTEGER
+    )
+  `);
+
+  database.run(`CREATE INDEX IF NOT EXISTS idx_st_ds_id ON schedule_tasks(data_source_id)`);
 
   // 指纹归类 — 分类表
   database.run(`
@@ -138,6 +157,17 @@ function hasColumn(database: Database, table: string, column: string): boolean {
   const result = database.exec(`PRAGMA table_info(${table})`);
   if (result.length === 0) return false;
   return result[0].values.some((row) => row[1] === column);
+}
+
+/**
+ * 检查数据库中是否存在某表
+ */
+function hasTable(database: Database, table: string): boolean {
+  const result = database.exec(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
+    [table]
+  );
+  return result.length > 0 && result[0].values.length > 0;
 }
 
 /**
@@ -282,6 +312,65 @@ function runMigrations(database: Database): void {
       database.run('CREATE INDEX IF NOT EXISTS idx_sh_ds_date ON sync_history(data_source_id, sync_date)');
 
       console.log('[DB Migration] sync_history: 迁移完成');
+      migrated = true;
+    }
+
+    // === 迁移 3: data_sources 补充定时调度字段（历史迁移，保留兼容） ===
+    if (!hasColumn(database, 'data_sources', 'schedule_enabled')) {
+      // 新库不再有这些列，跳过
+    }
+
+    // === 迁移 4: sync_history 补充 trigger_type 字段 ===
+    if (!hasColumn(database, 'sync_history', 'trigger_type')) {
+      console.log('[DB Migration] sync_history: 补充 trigger_type 列');
+      database.run("ALTER TABLE sync_history ADD COLUMN trigger_type TEXT DEFAULT 'manual'");
+      migrated = true;
+    }
+
+    // === 迁移 5: 创建 schedule_tasks 表，并从 data_sources 迁移旧定时配置 ===
+    if (!hasTable(database, 'schedule_tasks')) {
+      console.log('[DB Migration] 创建 schedule_tasks 表');
+      database.run(`
+        CREATE TABLE schedule_tasks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          data_source_id INTEGER NOT NULL,
+          instance_name TEXT NOT NULL,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          interval_minutes INTEGER NOT NULL DEFAULT 60,
+          days_offset INTEGER NOT NULL DEFAULT 0,
+          last_run_at INTEGER,
+          next_run_at INTEGER,
+          created_at INTEGER,
+          updated_at INTEGER
+        )
+      `);
+      database.run('CREATE INDEX IF NOT EXISTS idx_st_ds_id ON schedule_tasks(data_source_id)');
+
+      // 从旧 data_sources.schedule_* 字段迁移已有定时配置
+      if (hasColumn(database, 'data_sources', 'schedule_enabled')) {
+        const oldSchedules = database.exec(
+          `SELECT id, schedule_instance_name, schedule_interval_minutes, schedule_days_offset, schedule_enabled, last_scheduled_at, next_scheduled_at
+           FROM data_sources WHERE schedule_enabled = 1 AND schedule_instance_name IS NOT NULL AND schedule_instance_name != ''`
+        );
+        if (oldSchedules.length > 0) {
+          const now = Date.now();
+          for (const row of oldSchedules[0].values) {
+            const dsId = row[0] as number;
+            const instanceName = row[1] as string;
+            const interval = row[2] as number;
+            const daysOffset = row[3] as number;
+            const lastRunAt = row[5] as number | null;
+            const nextRunAt = row[6] as number | null;
+            database.run(
+              `INSERT INTO schedule_tasks (data_source_id, instance_name, enabled, interval_minutes, days_offset, last_run_at, next_run_at, created_at, updated_at)
+               VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+              [dsId, instanceName, interval, daysOffset, lastRunAt, nextRunAt, now, now]
+            );
+          }
+          console.log(`[DB Migration] 从 data_sources 迁移了 ${oldSchedules[0].values.length} 条定时配置`);
+        }
+      }
+
       migrated = true;
     }
 

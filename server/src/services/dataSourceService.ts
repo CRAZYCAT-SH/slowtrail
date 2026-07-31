@@ -134,8 +134,6 @@ export function listDataSources(): DataSourceListItem[] {
     let capabilities = { instanceEnumeration: false, configPreview: false };
     try {
       const provider = getProvider(record.type);
-      // describe 需要未脱敏的 settings，但我们从数据库读出的已经是明文
-      // 这里 record.settings 已被 maskSecrets 处理，需要用原始 settings
       const original = rowToRecord(row);
       summary = provider.describe(original.settings);
       capabilities = provider.capabilities();
@@ -259,10 +257,8 @@ export function updateDataSource(id: number, input: Partial<DataSourceInput>): D
 
   saveDatabase();
 
-  const record = getDataSourceRaw(id)!;
-  const summary = provider.describe(record.settings);
-  const capabilities = provider.capabilities();
-  return { ...record, summary, capabilities };
+  // 使用 getDataSource 统一返回含 schedule 的完整数据
+  return getDataSource(id)!;
 }
 
 /**

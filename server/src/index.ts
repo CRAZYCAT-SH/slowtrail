@@ -8,7 +8,9 @@ import statsRoutes from './routes/statsRoutes';
 import fingerprintRoutes from './routes/fingerprintRoutes';
 import groupRoutes from './routes/groupRoutes';
 import dataSourceRoutes from './routes/dataSourceRoutes';
+import scheduleRoutes from './routes/scheduleRoutes';
 import { initDefaultDataSource } from './services/dataSourceService';
+import { initScheduler, stopScheduler } from './services/schedulerService';
 
 // 加载环境变量（从项目根目录的 .env 文件）
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
@@ -31,6 +33,7 @@ app.use('/api/stats', statsRoutes);
 app.use('/api/fingerprints', fingerprintRoutes);
 app.use('/api/fingerprint-groups', groupRoutes);
 app.use('/api/datasources', dataSourceRoutes);
+app.use('/api/schedule', scheduleRoutes);
 
 // 生产模式下托管前端静态资源
 const clientDistPath = path.resolve(__dirname, '../../client/dist');
@@ -52,6 +55,9 @@ async function start() {
     // 从环境变量导入默认数据源（首次启动时创建，后续跳过）
     initDefaultDataSource();
 
+    // 初始化定时调度器
+    initScheduler();
+
     app.listen(PORT, () => {
       console.log(`[Server] 慢 SQL 分析服务已启动: http://localhost:${PORT}`);
     });
@@ -63,11 +69,13 @@ async function start() {
 
 // 优雅退出
 process.on('SIGINT', () => {
+  stopScheduler();
   closeDatabase();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
+  stopScheduler();
   closeDatabase();
   process.exit(0);
 });

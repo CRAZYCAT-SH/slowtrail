@@ -87,6 +87,17 @@ export default function Layout() {
               />
             </div>
           )}
+
+          {/* 刷新按钮（最右侧） */}
+          <button
+            onClick={() => window.location.reload()}
+            className={`${showGlobalFilters ? 'ml-3' : 'ml-auto'} p-1.5 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors flex-shrink-0`}
+            title="刷新页面"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </button>
         </div>
       </header>
 

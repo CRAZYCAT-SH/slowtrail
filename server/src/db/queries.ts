@@ -33,6 +33,7 @@ export interface SyncHistoryRecord {
   source_ref: string | null;
   synced_at: number;
   record_count: number;
+  trigger_type: string;
 }
 
 /**
@@ -115,13 +116,14 @@ export function addSyncRecord(
   instanceName: string,
   syncDate: string,
   sourceRef: string,
-  recordCount: number
+  recordCount: number,
+  triggerType: 'manual' | 'scheduled' = 'manual'
 ): void {
   const db = getDatabase();
   db.run(
-    `INSERT OR REPLACE INTO sync_history (data_source_id, instance_name, sync_date, source_ref, synced_at, record_count)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [dataSourceId, instanceName, syncDate, sourceRef, Date.now(), recordCount]
+    `INSERT OR REPLACE INTO sync_history (data_source_id, instance_name, sync_date, source_ref, synced_at, record_count, trigger_type)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [dataSourceId, instanceName, syncDate, sourceRef, Date.now(), recordCount, triggerType]
   );
 }
 
@@ -142,7 +144,7 @@ export function getSyncHistory(filter?: { dataSourceId?: number; instanceName?: 
     params.push(filter.instanceName);
   }
 
-  let sql = 'SELECT id, data_source_id, instance_name, sync_date, source_ref, synced_at, record_count FROM sync_history';
+  let sql = 'SELECT id, data_source_id, instance_name, sync_date, source_ref, synced_at, record_count, trigger_type FROM sync_history';
   if (conditions.length > 0) {
     sql += ' WHERE ' + conditions.join(' AND ');
   }
@@ -159,6 +161,7 @@ export function getSyncHistory(filter?: { dataSourceId?: number; instanceName?: 
     source_ref: row[4] as string | null,
     synced_at: row[5] as number,
     record_count: row[6] as number,
+    trigger_type: (row[7] as string) || 'manual',
   }));
 }
 

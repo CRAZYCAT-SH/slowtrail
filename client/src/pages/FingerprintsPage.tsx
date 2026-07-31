@@ -23,7 +23,7 @@ interface SqlModalData {
 }
 
 export default function FingerprintsPage() {
-  const { startTime: sharedStartTime, endTime: sharedEndTime, dbName, instanceName } = useDateRange();
+  const { startTime: sharedStartTime, endTime: sharedEndTime, setRange, dbName, instanceName } = useDateRange();
 
   // URL 参数同步
   const [queryParams, setQueryParams] = useQueryParams({
@@ -52,6 +52,17 @@ export default function FingerprintsPage() {
   const [searchInput, setSearchInput] = useState(search);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pageSize = 15;
+
+  // 挂载时：如果 URL 携带了时间参数且与全局不同，同步到全局 Context（顶部时间选择器）
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      if (startTime && endTime && (startTime !== sharedStartTime || endTime !== sharedEndTime)) {
+        setRange(startTime, endTime);
+      }
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 共享时间同步
   const prevSharedRef = useRef({ startTime: sharedStartTime, endTime: sharedEndTime });

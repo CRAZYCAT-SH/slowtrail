@@ -36,6 +36,35 @@ export interface DataSourceItem {
   capabilities: { instanceEnumeration: boolean; configPreview: boolean };
 }
 
+/** 定时任务 */
+export interface ScheduleTask {
+  id: number;
+  dataSourceId: number;
+  instanceName: string;
+  enabled: boolean;
+  intervalMinutes: number;
+  daysOffset: number;
+  lastRunAt: number | null;
+  nextRunAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** 定时任务列表项（附带数据源名称和运行状态） */
+export interface ScheduleTaskItem extends ScheduleTask {
+  dataSourceName: string;
+  running: boolean;
+}
+
+/** 创建/更新定时任务输入 */
+export interface ScheduleTaskInput {
+  dataSourceId: number;
+  instanceName: string;
+  enabled?: boolean;
+  intervalMinutes?: number;
+  daysOffset?: number;
+}
+
 export interface ProviderTypeInfo {
   type: string;
   label: string;
@@ -109,6 +138,29 @@ export const dataSourceApi = {
     api.get<{ success: boolean; data: EncodingOption[] }>('/datasources/encodings'),
 };
 
+// ========== 定时任务相关 ==========
+
+export const scheduleApi = {
+  /** 获取所有定时任务 */
+  getList: () =>
+    api.get<{ success: boolean; data: ScheduleTaskItem[] }>('/schedule'),
+  /** 获取单个任务 */
+  getTask: (id: number) =>
+    api.get<{ success: boolean; data: ScheduleTask }>(`/schedule/${id}`),
+  /** 创建任务 */
+  create: (data: ScheduleTaskInput) =>
+    api.post<{ success: boolean; data: ScheduleTask }>('/schedule', data),
+  /** 更新任务 */
+  update: (id: number, data: Partial<ScheduleTaskInput> & { enabled?: boolean }) =>
+    api.put<{ success: boolean; data: ScheduleTask }>(`/schedule/${id}`, data),
+  /** 删除任务 */
+  remove: (id: number) =>
+    api.delete<{ success: boolean; message: string }>(`/schedule/${id}`),
+  /** 立即触发任务 */
+  trigger: (id: number) =>
+    api.post<{ success: boolean; message: string }>(`/schedule/${id}/trigger`),
+};
+
 // ========== 同步相关 ==========
 
 export interface SyncParams {
@@ -135,6 +187,7 @@ export interface SyncHistoryItem {
   source_ref: string | null;
   synced_at: number;
   record_count: number;
+  trigger_type: string;
 }
 
 export const syncApi = {

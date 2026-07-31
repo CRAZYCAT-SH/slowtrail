@@ -12,7 +12,7 @@ import ButtonGroup from '../components/ButtonGroup';
 
 export default function TrendsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { startTime: globalStartTime, endTime: globalEndTime, dbName, instanceName } = useDateRange();
+  const { startTime: globalStartTime, endTime: globalEndTime, setRange, dbName, instanceName } = useDateRange();
 
   const [trends, setTrends] = useState<TrendPoint[]>([]);
   const [loading, setLoading] = useState(false);
@@ -32,6 +32,21 @@ export default function TrendsPage() {
 
   const startTime = urlStartTime ? Number(urlStartTime) : globalStartTime;
   const endTime = urlEndTime ? Number(urlEndTime) : globalEndTime;
+
+  // 挂载时：如果 URL 携带了时间参数且与全局不同，同步到全局 Context（顶部时间选择器）
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      if (urlStartTime && urlEndTime) {
+        const s = Number(urlStartTime);
+        const e = Number(urlEndTime);
+        if (s && e && (s !== globalStartTime || e !== globalEndTime)) {
+          setRange(s, e);
+        }
+      }
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 当全局时间变化时（用户通过导航栏修改），清除 URL 中的时间参数以切换到全局时间
   const prevGlobalRef = useRef({ startTime: globalStartTime, endTime: globalEndTime });

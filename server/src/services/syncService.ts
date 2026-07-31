@@ -29,6 +29,7 @@ export interface SyncParams {
   startDate: string;   // YYYY-MM-DD
   endDate: string;     // YYYY-MM-DD
   forceOverwrite?: boolean;
+  triggerType?: 'manual' | 'scheduled';
 }
 
 export interface SyncResult {
@@ -126,7 +127,7 @@ function toSlowQueryRecord(
  * 按日为单元迭代：每天做时间区间查询 → 逐批算指纹入库 → 记同步历史
  */
 export async function syncFromDataSource(params: SyncParams): Promise<SyncResult> {
-  const { instanceName, startDate, endDate, forceOverwrite = false } = params;
+  const { instanceName, startDate, endDate, forceOverwrite = false, triggerType = 'manual' } = params;
 
   // 预加载指纹模块（ESM 包需要动态导入）
   await getFingerprint();
@@ -208,7 +209,7 @@ export async function syncFromDataSource(params: SyncParams): Promise<SyncResult
 
       if (dayCount > 0) {
         // 记录同步历史
-        addSyncRecord(dataSourceId, instanceName, date, sourceRef, dayCount);
+        addSyncRecord(dataSourceId, instanceName, date, sourceRef, dayCount, triggerType);
         result.syncedDates.push(date);
         result.totalRecords += dayCount;
         console.log(`[Sync] ${date} (instance: ${instanceName}) 同步完成: ${dayCount} 条`);

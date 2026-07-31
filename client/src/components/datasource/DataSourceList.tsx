@@ -12,9 +12,11 @@ interface Props {
   dataSources: DataSourceItem[];
   onEdit: (item: DataSourceItem) => void;
   onDeleted: () => void;
+  /** 紧凑模式：适用于侧栏窄空间 */
+  compact?: boolean;
 }
 
-export default function DataSourceList({ dataSources, onEdit, onDeleted }: Props) {
+export default function DataSourceList({ dataSources, onEdit, onDeleted, compact }: Props) {
   const [testingId, setTestingId] = useState<number | null>(null);
   const [testResults, setTestResults] = useState<Record<number, { connected: boolean; info?: string; error?: string }>>({});
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -52,56 +54,43 @@ export default function DataSourceList({ dataSources, onEdit, onDeleted }: Props
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       {dataSources.map((ds) => (
-        <div key={ds.id} className="flex items-center justify-between px-4 py-3 bg-gray-50/50 rounded-lg border border-gray-100">
-          <div className="flex items-center gap-3 min-w-0">
-            {/* 名称与标签 */}
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-gray-900 truncate">{ds.name}</span>
+        <div key={ds.id} className={`rounded-lg border border-gray-100 ${compact ? 'px-3 py-2.5' : 'px-4 py-3'} bg-gray-50/50`}>
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className={`font-medium text-gray-900 truncate ${compact ? 'text-xs' : 'text-sm'}`}>{ds.name}</span>
                 <span className="px-1.5 py-0.5 text-[10px] font-medium bg-primary/10 text-primary rounded">
                   {ds.type === 'kibana_proxy' ? 'Kibana' : ds.type === 'direct_es' ? '直连' : ds.type}
                 </span>
                 {ds.isDefault && (
-                  <span className="px-1.5 py-0.5 text-[10px] font-medium bg-amber-50 text-amber-600 rounded">
-                    环境变量
-                  </span>
+                  <span className="px-1.5 py-0.5 text-[10px] font-medium bg-amber-50 text-amber-600 rounded">默认</span>
                 )}
                 {!ds.enabled && (
-                  <span className="px-1.5 py-0.5 text-[10px] font-medium bg-gray-100 text-gray-400 rounded">
-                    已禁用
-                  </span>
+                  <span className="px-1.5 py-0.5 text-[10px] font-medium bg-gray-100 text-gray-400 rounded">禁用</span>
                 )}
               </div>
-              <p className="text-xs text-gray-500 mt-0.5 truncate">{ds.summary}</p>
+              {!compact && <p className="text-xs text-gray-500 mt-0.5 truncate">{ds.summary}</p>}
+            </div>
+
+            {/* 操作按钮 */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              {testResults[ds.id] && (
+                <span className={`text-[10px] ${testResults[ds.id].connected ? 'text-green-600' : 'text-red-500'}`}>
+                  {testResults[ds.id].connected ? '✓' : '✗'}
+                </span>
+              )}
+              <Button size="sm" variant="secondary" onClick={() => handleTest(ds.id)} disabled={testingId === ds.id}>
+                {testingId === ds.id ? '...' : '测试'}
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => onEdit(ds)}>编辑</Button>
+              {ds.isDefault ? null : (
+                <Button size="sm" variant="danger" onClick={() => setDeletingId(ds.id)}>删除</Button>
+              )}
             </div>
           </div>
-
-          {/* 操作 */}
-          <div className="flex items-center gap-2 shrink-0">
-            {/* 测试结果 */}
-            {testResults[ds.id] && (
-              <span className={`text-xs ${testResults[ds.id].connected ? 'text-green-600' : 'text-red-500'}`}>
-                {testResults[ds.id].connected ? '已连接' : '失败'}
-              </span>
-            )}
-            <Button size="sm" variant="secondary" onClick={() => handleTest(ds.id)} disabled={testingId === ds.id}>
-              {testingId === ds.id ? '...' : '测试'}
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => onEdit(ds)}>
-              编辑
-            </Button>
-            {ds.isDefault ? (
-              <Button size="sm" variant="secondary" disabled title="默认数据源不可删除">
-                删除
-              </Button>
-            ) : (
-              <Button size="sm" variant="danger" onClick={() => setDeletingId(ds.id)}>
-                删除
-              </Button>
-            )}
-          </div>
+          {compact && <p className="text-[11px] text-gray-400 mt-1 truncate">{ds.summary}</p>}
         </div>
       ))}
 

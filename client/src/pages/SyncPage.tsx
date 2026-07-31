@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { dataSourceApi, syncApi } from '../api';
 import type { DataSourceItem, ProviderTypeInfo, SyncHistoryItem, SyncResult } from '../api';
-import { DataSourceList, DataSourceModal } from '../components/datasource';
+import { DataSourceList, DataSourceModal, ScheduleTaskList } from '../components/datasource';
 import DateRangeShortcuts from '../components/DateRangeShortcuts';
 import Button from '../components/Button';
 import Select from '../components/Select';
@@ -14,8 +14,11 @@ function formatDateHelper(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
+type TabKey = 'sync' | 'datasource' | 'schedule';
+
 export default function SyncPage() {
   const { refreshFilterOptions } = useDateRange();
+  const [activeTab, setActiveTab] = useState<TabKey>('sync');
 
   // 数据源相关
   const [dataSources, setDataSources] = useState<DataSourceItem[]>([]);
@@ -47,7 +50,7 @@ export default function SyncPage() {
   const [dbStats, setDbStats] = useState<{ totalRecords: number; dbSize: string } | null>(null);
   const [error, setError] = useState('');
 
-  // 数据源名称映射（用于历史表格展示）
+  // 数据源名称映射
   const dsNameMap = useMemo(() => {
     const map = new Map<number, string>();
     for (const ds of dataSources) {
@@ -69,14 +72,12 @@ export default function SyncPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 选择默认数据源（在 loadDataSources 完成后设置，避免 effect 中 setState）
   async function loadDataSources() {
     try {
       const res = await dataSourceApi.getList();
       if (res.data.success) {
         const list = res.data.data;
         setDataSources(list);
-        // 首次加载时设置默认选中
         if (!selectedDsId && list.length > 0) {
           const defaultDs = list.find((ds) => ds.isDefault && ds.enabled);
           const firstEnabled = list.find((ds) => ds.enabled);
@@ -116,7 +117,6 @@ export default function SyncPage() {
       if (res.data.success) {
         const names = res.data.data;
         setInstanceNames(names);
-        // 如果当前选中的实例不在新列表中，自动选中第一个或清空
         if (names.length > 0) {
           if (!names.includes(selectedInstance)) {
             setSelectedInstance(names[0]);
@@ -247,189 +247,246 @@ export default function SyncPage() {
     .filter((ds) => ds.enabled)
     .map((ds) => ({ value: String(ds.id), label: ds.name }));
 
-  // 切换数据源时重置实例列表
+  // 切换数据源时自动加载实例列表
+  useEffect(() => {
+    if (selectedDsId && canEnumerateInstances) {
+      loadInstanceNames();
+    } else if (selectedDsId) {
+      loadLastInstance();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDsId, canEnumerateInstances]);
+
   function handleDsChange(v: string) {
     const newId = v ? Number(v) : '' as const;
     setSelectedDsId(newId);
     setInstanceNames([]);
     setSelectedInstance('');
-    if (newId) {
-      loadLastInstance();
-    }
   }
 
+  // Tab 配置
+  const tabs: { key: TabKey; label: string }[] = [
+    { key: 'sync', label: '拉取数据' },
+    { key: 'datasource', label: '数据源' },
+    { key: 'schedule', label: '定时任务' },
+  ];
+
   return (
-    <div>
-      {/* 数据源管理区块 */}
-      <div className="bg-white p-5 rounded-lg mb-5 shadow-sm">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-base font-semibold text-gray-900">数据源</h3>
-          <Button variant="primary" size="sm" onClick={handleAddDs}>新增</Button>
+    <div className="space-y-5">
+      {/* ===== 上方区域：Tab 切换 ===== */}
+      <div className="bg-white rounded-lg shadow-sm">
+        {/* Tab 导航 */}
+        <div className="flex border-b border-gray-100">
+          {tabs.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`px-5 py-3 text-sm font-medium transition-colors relative ${
+                activeTab === tab.key
+                  ? 'text-primary'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {tab.label}
+              {activeTab === tab.key && (
+                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-t" />
+              )}
+            </button>
+          ))}
         </div>
-        <DataSourceList dataSources={dataSources} onEdit={handleEditDs} onDeleted={handleDsDeleted} />
-      </div>
 
-      {/* 数据库统计 */}
-      {dbStats && (
-        <div className="flex items-center gap-5 px-4 py-3 bg-white rounded-lg mb-5 shadow-sm">
-          <span className="text-sm text-gray-600">本地数据: <strong className="text-gray-900">{dbStats.totalRecords}</strong> 条</span>
-          <span className="text-sm text-gray-600">数据库大小: <strong className="text-gray-900">{dbStats.dbSize}</strong></span>
-          <Button variant="danger" onClick={handleClearData}>清空所有</Button>
-        </div>
-      )}
-
-      {/* 同步表单 */}
-      <div className="bg-white p-5 rounded-lg mb-5 shadow-sm">
-        <h3 className="text-base font-semibold text-gray-900 mb-4">拉取数据</h3>
-        <div className="flex gap-4 items-end mb-3">
-          {/* 数据源选择 */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm text-gray-500 font-medium">数据源</label>
-            <Select
-              value={selectedDsId ? String(selectedDsId) : ''}
-              onChange={handleDsChange}
-              placeholder="-- 请选择数据源 --"
-              options={[
-                { value: '', label: '-- 请选择数据源 --' },
-                ...dsOptions,
-              ]}
-              className="min-w-[160px]"
-            />
-          </div>
-
-          {/* 实例选择 */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm text-gray-500 font-medium">实例</label>
-            <div className="flex gap-2">
-              {canEnumerateInstances ? (
-                <>
+        {/* Tab 内容 */}
+        <div className="p-5">
+          {/* 拉取数据 */}
+          {activeTab === 'sync' && (
+            <div>
+              <div className="bg-gray-50 border border-gray-100 rounded-lg p-4">
+                <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-4 items-center">
+                  {/* 数据源 */}
+                  <label className="text-sm text-gray-500 font-medium whitespace-nowrap justify-self-end">数据源</label>
                   <Select
-                    value={selectedInstance}
-                    onChange={setSelectedInstance}
-                    placeholder="-- 请选择实例 --"
+                    value={selectedDsId ? String(selectedDsId) : ''}
+                    onChange={handleDsChange}
+                    placeholder="-- 请选择数据源 --"
                     options={[
-                      { value: '', label: '-- 请选择实例 --' },
-                      ...instanceNames.map((name) => ({ value: name, label: name })),
+                      { value: '', label: '-- 请选择数据源 --' },
+                      ...dsOptions,
                     ]}
-                    className="min-w-[160px]"
+                    className="min-w-[160px] max-w-[280px]"
                   />
-                  <Button variant="secondary" onClick={loadInstanceNames} disabled={loadingInstances || !selectedDsId}>
-                    {loadingInstances ? '加载中...' : '刷新列表'}
+
+                  {/* 实例 */}
+                  <label className="text-sm text-gray-500 font-medium whitespace-nowrap justify-self-end">实例</label>
+                  <div className="flex gap-2 items-center">
+                    {canEnumerateInstances ? (
+                      <Select
+                        value={selectedInstance}
+                        onChange={setSelectedInstance}
+                        placeholder={loadingInstances ? '加载中...' : '-- 请选择实例 --'}
+                        options={[
+                          { value: '', label: loadingInstances ? '加载中...' : '-- 请选择实例 --' },
+                          ...instanceNames.map((name) => ({ value: name, label: name })),
+                        ]}
+                        className="min-w-[160px] max-w-[280px]"
+                      />
+                    ) : (
+                      <input
+                        type="text"
+                        className="px-3 py-1.5 text-sm border border-gray-200 rounded-md bg-white focus:border-primary/50 focus:outline-none min-w-[200px] max-w-[280px]"
+                        value={selectedInstance}
+                        onChange={(e) => setSelectedInstance(e.target.value)}
+                        placeholder="输入实例名"
+                      />
+                    )}
+                  </div>
+
+                  {/* 日期范围 */}
+                  <label className="text-sm text-gray-500 font-medium whitespace-nowrap justify-self-end">日期范围</label>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <DateRangeShortcuts
+                      startDate={startDate}
+                      endDate={endDate}
+                      onChange={({ startDate: s, endDate: e }) => {
+                        setStartDate(s);
+                        setEndDate(e);
+                        const today = formatDateHelper(new Date());
+                        setForceOverwrite(s === today && e === today);
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* 操作栏 */}
+                <div className="mt-4 pt-3 border-t border-gray-200 flex items-center justify-between">
+                  <label className="inline-flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer select-none whitespace-nowrap">
+                    <input
+                      type="checkbox"
+                      checked={forceOverwrite}
+                      onChange={(e) => setForceOverwrite(e.target.checked)}
+                      className="w-3.5 h-3.5 accent-primary"
+                    />
+                    <span>覆盖已拉取</span>
+                  </label>
+                  <Button variant="primary" onClick={handleSync} disabled={loading}>
+                    {loading ? '拉取中...' : '开始拉取'}
                   </Button>
-                </>
-              ) : (
-                <input
-                  type="text"
-                  className="px-3 py-1.5 text-sm border border-gray-200 rounded-md bg-white focus:border-primary/50 focus:outline-none min-w-[200px]"
-                  value={selectedInstance}
-                  onChange={(e) => setSelectedInstance(e.target.value)}
-                  placeholder="输入实例名"
-                />
+                </div>
+              </div>
+
+              {/* 错误信息 */}
+              {error && (
+                <div className="mt-4 px-4 py-3 bg-red-50 border border-red-200 rounded-md text-red-700 text-sm">{error}</div>
+              )}
+
+              {/* 同步结果 */}
+              {syncResult && (
+                <div className="mt-4 bg-green-50 border border-green-200 p-4 rounded-lg">
+                  <h4 className="m-0 mb-2 text-green-700 text-sm font-semibold">同步结果</h4>
+                  <p className="text-sm text-gray-700 mb-1">拉取记录数: <strong>{syncResult.totalRecords}</strong></p>
+                  <p className="text-sm text-gray-700 mb-1">成功: {syncResult.syncedDates.length} 天</p>
+                  {syncResult.skippedDates.length > 0 && (
+                    <p className="text-sm text-gray-700 mb-1">跳过（已拉取）: {syncResult.skippedDates.length} 天 ({syncResult.skippedDates.join(', ')})</p>
+                  )}
+                  {syncResult.emptyDates.length > 0 && (
+                    <p className="text-sm text-gray-700 mb-1">无数据: {syncResult.emptyDates.length} 天 ({syncResult.emptyDates.join(', ')})</p>
+                  )}
+                  {syncResult.errors.length > 0 && (
+                    <div className="mt-2 text-red-600 text-sm">
+                      <p className="mb-1">错误:</p>
+                      <ul className="pl-4">
+                        {syncResult.errors.map((err, i) => <li key={i}>{err}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
-          </div>
-        </div>
-        <div className="flex gap-4 items-end">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm text-gray-500 font-medium">日期范围</label>
-            <div className="flex items-center gap-4">
-              <DateRangeShortcuts
-                startDate={startDate}
-                endDate={endDate}
-                onChange={({ startDate: s, endDate: e }) => {
-                  setStartDate(s);
-                  setEndDate(e);
-                  const today = formatDateHelper(new Date());
-                  setForceOverwrite(s === today && e === today);
-                }}
-              />
-              <label className="inline-flex items-center gap-1 text-sm text-gray-600 cursor-pointer select-none whitespace-nowrap">
-                <input
-                  type="checkbox"
-                  checked={forceOverwrite}
-                  onChange={(e) => setForceOverwrite(e.target.checked)}
-                  className="w-3.5 h-3.5 accent-primary"
-                />
-                <span>覆盖已拉取数据</span>
-              </label>
-              <Button variant="primary" onClick={handleSync} disabled={loading}>
-                {loading ? '拉取中...' : '拉取数据'}
-              </Button>
+          )}
+
+          {/* 数据源管理 */}
+          {activeTab === 'datasource' && (
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-sm text-gray-500">管理数据源连接配置，支持 Kibana 代理、直连 ES、Excel 导入等类型。</p>
+                <Button variant="primary" size="sm" onClick={handleAddDs}>新增数据源</Button>
+              </div>
+              <DataSourceList dataSources={dataSources} onEdit={handleEditDs} onDeleted={handleDsDeleted} />
             </div>
-          </div>
+          )}
+
+          {/* 定时任务 */}
+          {activeTab === 'schedule' && (
+            <div>
+              <p className="text-sm text-gray-500 mb-4">配置定时自动同步任务，按指定间隔自动拉取慢查询数据。</p>
+              <ScheduleTaskList dataSources={dataSources} onSynced={() => { loadHistory(); loadStats(); refreshFilterOptions(); }} />
+            </div>
+          )}
         </div>
       </div>
 
-      {/* 错误信息 */}
-      {error && (
-        <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-md text-red-700 text-sm mb-4">{error}</div>
-      )}
-
-      {/* 同步结果 */}
-      {syncResult && (
-        <div className="bg-green-50 border border-green-200 p-4 rounded-lg mb-5">
-          <h3 className="m-0 mb-2 text-green-700 font-semibold">同步结果</h3>
-          <p className="text-sm text-gray-700 mb-1">拉取记录数: <strong>{syncResult.totalRecords}</strong></p>
-          <p className="text-sm text-gray-700 mb-1">成功: {syncResult.syncedDates.length} 天</p>
-          {syncResult.skippedDates.length > 0 && (
-            <p className="text-sm text-gray-700 mb-1">跳过（已拉取）: {syncResult.skippedDates.length} 天 ({syncResult.skippedDates.join(', ')})</p>
-          )}
-          {syncResult.emptyDates.length > 0 && (
-            <p className="text-sm text-gray-700 mb-1">无数据: {syncResult.emptyDates.length} 天 ({syncResult.emptyDates.join(', ')})</p>
-          )}
-          {syncResult.errors.length > 0 && (
-            <div className="mt-2 text-red-600 text-sm">
-              <p className="mb-1">错误:</p>
-              <ul className="pl-4">
-                {syncResult.errors.map((err, i) => <li key={i}>{err}</li>)}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* 同步历史 */}
+      {/* ===== 下方区域：同步历史 ===== */}
       <div className="bg-white p-5 rounded-lg shadow-sm">
-        <h3 className="text-base font-semibold text-gray-900 mb-4">同步历史</h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-base font-semibold text-gray-900">同步历史</h3>
+          <div className="flex items-center gap-4">
+            {dbStats && (
+              <span className="text-xs text-gray-500">
+                共 <strong className="text-gray-700">{dbStats.totalRecords}</strong> 条 · {dbStats.dbSize}
+              </span>
+            )}
+            <Button variant="danger" size="sm" onClick={handleClearData}>清空所有</Button>
+          </div>
+        </div>
+
         {history.length === 0 ? (
           <p className="text-sm text-gray-400">暂无同步记录，请先拉取数据</p>
         ) : (
-          <table className="w-full border-collapse">
-            <thead>
-              <tr>
-                <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-100">数据源</th>
-                <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-100">实例</th>
-                <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-100">数据日期</th>
-                <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-100">记录数</th>
-                <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-100">同步时间</th>
-                <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-100">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {history.map((item) => (
-                <tr key={item.id} className="border-b border-gray-100">
-                  <td className="px-3 py-2.5 text-sm">
-                    {item.data_source_id ? (dsNameMap.get(item.data_source_id) || <span className="text-gray-400">已删除</span>) : <span className="text-gray-400">-</span>}
-                  </td>
-                  <td className="px-3 py-2.5 text-sm">{item.instance_name}</td>
-                  <td className="px-3 py-2.5 text-sm" title={item.source_ref || ''}>
-                    {item.sync_date}
-                  </td>
-                  <td className="px-3 py-2.5 text-sm">{item.record_count}</td>
-                  <td className="px-3 py-2.5 text-sm">{new Date(item.synced_at).toLocaleString()}</td>
-                  <td className="px-3 py-2.5 text-sm">
-                    <Button variant="danger" size="sm" onClick={() => handleDeleteRecord(item)}>
-                      删除
-                    </Button>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-100">数据源</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-100">实例</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-100">数据日期</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-100">记录数</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-100">同步时间</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-100">方式</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-100">操作</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {history.map((item) => (
+                  <tr key={item.id} className="border-b border-gray-100">
+                    <td className="px-3 py-2.5 text-sm">
+                      {item.data_source_id ? (dsNameMap.get(item.data_source_id) || <span className="text-gray-400">已删除</span>) : <span className="text-gray-400">-</span>}
+                    </td>
+                    <td className="px-3 py-2.5 text-sm">{item.instance_name}</td>
+                    <td className="px-3 py-2.5 text-sm" title={item.source_ref || ''}>
+                      {item.sync_date}
+                    </td>
+                    <td className="px-3 py-2.5 text-sm">{item.record_count}</td>
+                    <td className="px-3 py-2.5 text-sm">{new Date(item.synced_at).toLocaleString()}</td>
+                    <td className="px-3 py-2.5 text-sm">
+                      {item.trigger_type === 'scheduled' ? (
+                        <span className="px-1.5 py-0.5 text-[10px] font-medium bg-green-50 text-green-600 rounded">定时</span>
+                      ) : (
+                        <span className="px-1.5 py-0.5 text-[10px] font-medium bg-gray-100 text-gray-500 rounded">手动</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 text-sm">
+                      <Button variant="danger" size="sm" onClick={() => handleDeleteRecord(item)}>
+                        删除
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
-      {/* 数据源弹窗（用 key 强制在每次打开时重建内部状态） */}
+      {/* 数据源弹窗 */}
       <DataSourceModal
         key={modalVisible ? `modal-${editingDs?.id || 'new'}` : 'hidden'}
         visible={modalVisible}
