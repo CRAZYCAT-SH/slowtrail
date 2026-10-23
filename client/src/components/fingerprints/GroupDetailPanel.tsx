@@ -4,18 +4,11 @@ import {
 } from 'recharts';
 import { useNavigate } from 'react-router-dom';
 import { fingerprintApi } from '../../api';
-import type { GroupDetailResult, FingerprintDetail } from '../../api';
+import type { GroupDetailResult, FingerprintDetail, SlowQuerySample } from '../../api';
 import FingerprintDetailPanel from './FingerprintDetailPanel';
 import { formatTime } from './utils';
 import Button from '../Button';
 import ButtonGroup from '../ButtonGroup';
-
-interface SqlModalData {
-  sql: string;
-  queryTime: number;
-  rowsExamined: number;
-  timestamp: number;
-}
 
 interface Props {
   groupDetail: GroupDetailResult;
@@ -24,7 +17,7 @@ interface Props {
   endTime: number;
   detailLoading: boolean;
   onChangeTrendGranularity?: (g: 'minute' | 'hour' | 'day') => void;
-  onShowSqlModal?: (data: SqlModalData) => void;
+  onShowSqlModal?: (sample: SlowQuerySample) => void;
 }
 
 export default function GroupDetailPanel({ groupDetail, groupId, startTime, endTime, detailLoading, onChangeTrendGranularity, onShowSqlModal }: Props) {
@@ -220,8 +213,11 @@ export default function GroupDetailPanel({ groupDetail, groupId, startTime, endT
               <tr className="bg-gray-100">
                 <th className="px-3 py-2 text-left text-gray-500 font-medium">指纹</th>
                 <th className="px-3 py-2 text-left text-gray-500 font-medium whitespace-nowrap">频次</th>
+                <th className="px-3 py-2 text-left text-gray-500 font-medium whitespace-nowrap">总耗时</th>
                 <th className="px-3 py-2 text-left text-gray-500 font-medium whitespace-nowrap">平均耗时</th>
                 <th className="px-3 py-2 text-left text-gray-500 font-medium whitespace-nowrap">最大耗时</th>
+                <th className="px-3 py-2 text-left text-gray-500 font-medium whitespace-nowrap">最小耗时</th>
+                <th className="px-3 py-2 text-left text-gray-500 font-medium whitespace-nowrap">平均锁等待</th>
                 <th className="px-3 py-2 text-left text-gray-500 font-medium whitespace-nowrap">平均扫描行</th>
               </tr>
             </thead>
@@ -237,13 +233,16 @@ export default function GroupDetailPanel({ groupDetail, groupId, startTime, endT
                       <code className="font-mono text-xs text-gray-700 break-all line-clamp-2">{member.fingerprint}</code>
                     </td>
                     <td className="px-3 py-2 font-mono whitespace-nowrap">{member.count}</td>
+                    <td className="px-3 py-2 font-mono whitespace-nowrap">{formatTime(member.totalQueryTime)}</td>
                     <td className="px-3 py-2 font-mono whitespace-nowrap">{formatTime(member.avgQueryTime)}</td>
                     <td className="px-3 py-2 font-mono whitespace-nowrap">{formatTime(member.maxQueryTime)}</td>
+                    <td className="px-3 py-2 font-mono whitespace-nowrap">{formatTime(member.minQueryTime)}</td>
+                    <td className="px-3 py-2 font-mono whitespace-nowrap">{formatTime(member.avgLockTime)}</td>
                     <td className="px-3 py-2 font-mono whitespace-nowrap">{Math.round(member.avgRowsExamined).toLocaleString()}</td>
                   </tr>
                   {expandedMemberFp === member.fingerprint && (
                     <tr key={member.fingerprint + '-detail'}>
-                      <td colSpan={5} className="p-0 bg-white border-t border-gray-100">
+                      <td colSpan={8} className="p-0 bg-white border-t border-gray-100">
                         {memberDetail ? (
                           <FingerprintDetailPanel
                             detail={memberDetail}

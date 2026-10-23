@@ -1,9 +1,9 @@
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
-import type { FingerprintDetail } from '../../api';
+import type { FingerprintDetail, SlowQuerySample } from '../../api';
 import { useNavigate } from 'react-router-dom';
-import { formatTime } from './utils';
+import { formatTime, formatTimeOrDash, formatCount, formatText } from './utils';
 import Button from '../Button';
 import ButtonGroup from '../ButtonGroup';
 
@@ -17,7 +17,7 @@ interface Props {
   samplesPageSize: number;
   onChangeTrendGranularity: (g: 'minute' | 'hour' | 'day') => void;
   onLoadSamplesPage: (page: number) => void;
-  onShowSqlModal: (data: { sql: string; queryTime: number; rowsExamined: number; timestamp: number }) => void;
+  onShowSqlModal: (sample: SlowQuerySample) => void;
 }
 
 export default function FingerprintDetailPanel({
@@ -57,10 +57,13 @@ export default function FingerprintDetailPanel({
         <div className="flex gap-3 flex-wrap">
           {[
             { value: detail.count, label: '出现次数' },
+            { value: formatTimeOrDash(detail.totalQueryTime), label: '总耗时' },
             { value: formatTime(detail.avgQueryTime), label: '平均耗时' },
             { value: formatTime(detail.maxQueryTime), label: '最大耗时' },
             { value: formatTime(detail.minQueryTime), label: '最小耗时' },
-            { value: formatTime(detail.avgLockTime), label: '平均锁等待' },
+            { value: formatTimeOrDash(detail.avgLockTime), label: '平均锁等待' },
+            { value: formatCount(Math.round(detail.avgRowsExamined)), label: '平均扫描行' },
+            { value: detail.avgRowsSent == null ? '-' : formatCount(Math.round(detail.avgRowsSent)), label: '平均返回行' },
           ].map((stat) => (
             <div key={stat.label} className="flex flex-col items-center px-4 py-2 bg-white border border-gray-100 rounded-md min-w-[80px]">
               <span className="text-base font-semibold text-gray-900 font-mono">{stat.value}</span>
@@ -160,18 +163,19 @@ export default function FingerprintDetailPanel({
               className="border border-gray-200 rounded-md mb-2 overflow-hidden cursor-pointer transition-all hover:border-primary/30 hover:shadow-sm"
               onClick={(e) => {
                 e.stopPropagation();
-                onShowSqlModal({
-                  sql: sample.query_sql,
-                  queryTime: sample.query_time,
-                  rowsExamined: sample.rows_examined,
-                  timestamp: sample.timestamp,
-                });
+                onShowSqlModal(sample);
               }}
             >
-              <div className="flex gap-4 px-3 py-1.5 bg-gray-50 text-xs text-gray-500 items-center">
-                <span className="text-primary font-semibold">{formatTime(sample.query_time)}</span>
-                <span>{sample.rows_examined.toLocaleString()} rows</span>
-                <span>{new Date(sample.timestamp).toLocaleString()}</span>
+              {/* 行级字段概要：其余字段（用户主机、实例 ID、节点、来源索引、数据源、同步日期）在弹窗中完整展示 */}
+              <div className="flex flex-wrap gap-x-4 gap-y-1 px-3 py-1.5 bg-gray-50 text-xs text-gray-500 items-center">
+                <span className="text-primary font-semibold" title="查询耗时">{formatTime(sample.query_time)}</span>
+                <span title="锁等待时间">锁等待 <span className="font-mono text-gray-700">{formatTimeOrDash(sample.lock_time)}</span></span>
+                <span title="扫描行数">扫描 <span className="font-mono text-gray-700">{formatCount(sample.rows_examined)}</span></span>
+                <span title="返回行数">返回 <span className="font-mono text-gray-700">{formatCount(sample.rows_sent)}</span></span>
+                <span title="数据库名">库 <span className="font-mono text-gray-700">{formatText(sample.db_name)}</span></span>
+                <span title="实例名">实例 <span className="font-mono text-gray-700">{formatText(sample.instance_name)}</span></span>
+                <span title="执行用户">用户 <span className="font-mono text-gray-700">{formatText(sample.user_name)}</span></span>
+                <span className="ml-auto" title="发生时间">{new Date(sample.timestamp).toLocaleString()}</span>
               </div>
               <pre className="m-0 px-3 py-2.5 text-xs font-mono bg-white text-gray-700 leading-relaxed line-clamp-3 whitespace-pre-wrap break-all">{sample.query_sql}</pre>
             </div>

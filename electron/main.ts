@@ -58,6 +58,9 @@ function startServer(): Promise<number> {
       ELECTRON_RUN_AS_NODE: '1',
     };
 
+    // 后端以 ELECTRON_RUN_AS_NODE 模式跑在 electron 二进制里，
+    // 因此 better-sqlite3 的 .node 必须是 Electron ABI 版
+    // （由 scripts/prepare-native-electron.js 在打包时置入）
     serverProcess = spawn(process.execPath, [serverEntry], {
       env,
       stdio: ['ignore', 'pipe', 'pipe'],

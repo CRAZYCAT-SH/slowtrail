@@ -6,12 +6,12 @@
 
 ## 技术栈
 
-- **后端**：Node.js + TypeScript + Express + sql.js（SQLite）+ axios + sql-fingerprint + xlsx + multer
+- **后端**：Node.js + TypeScript + Express + better-sqlite3（SQLite）+ axios + sql-fingerprint + xlsx + multer
 - **前端**：React 19 + TypeScript + Vite + Tailwind CSS 4 + React Router 7 + Recharts 3 + Axios
 - **开发工具**：tsx（开发模式）、concurrently（前后端并行启动）、ESLint
 - **桌面打包**：Electron 33 + electron-builder（支持 Windows/macOS/Linux 安装包）
 - **容器部署**：Docker（多阶段构建）
-- **数据存储**：sql.js（内存数据库 + 文件持久化），数据文件位于 `server/data/slow_queries.db`
+- **数据存储**：better-sqlite3（原生 SQLite，直接读写磁盘 + WAL），数据文件位于 `server/data/slow_queries.db`
 
 ## 项目结构
 
@@ -28,13 +28,17 @@ slow-sql-checker/
 │   ├── preload.ts            # 预加载脚本（contextBridge）
 │   └── tsconfig.json         # Electron TypeScript 配置
 ├── scripts/                  # 辅助脚本
-│   └── wait-then-electron.js # 等待服务就绪后启动 Electron
+│   ├── wait-then-electron.js # 等待服务就绪后启动 Electron
+│   ├── clean-release.js      # 清理旧的打包产物
+│   └── prepare-native-electron.js # 下载 Electron ABI 版 better-sqlite3 原生模块
 ├── build/                    # 打包资源（图标文件）
+│   └── native/electron/<platform>-<arch>/ # Electron ABI 版 .node（打包用，自动生成）
 ├── server/                   # 后端服务
 │   ├── src/
 │   │   ├── index.ts          # Express 入口，注册路由和中间件
 │   │   ├── db/
-│   │   │   ├── index.ts      # SQLite 数据库初始化、表结构、迁移、持久化
+│   │   │   ├── index.ts      # 数据库初始化、PRAGMA、表结构、迁移、体积统计、VACUUM
+│   │   │   ├── sqliteAdapter.ts # better-sqlite3 适配层（对外保持 sql.js 调用形状）
 │   │   │   └── queries.ts    # 数据库操作（批量插入、同步记录、统计）
 │   │   ├── providers/        # 数据源 Provider 可插拔架构
 │   │   │   ├── types.ts      # Provider 契约、共享类型、默认值
@@ -150,11 +154,31 @@ npm run pack
 - 打包资源图标放置在 `build/` 目录（ico/icns/png 格式）
 - 托盘图标：Windows 优先使用 `build/icon.ico`，其他平台使用 `build/icon.png`；开发模式路径从 `electron/dist/` 回溯两级到项目根
 
+**原生模块 ABI（重要）**：
+
+better-sqlite3 是原生模块，`.node` 二进制与 ABI 版本强绑定，而本项目存在两套运行时：
+
+| 场景 | 后端运行在 | ABI |
+|------|-----------|-----|
+| 开发模式 | tsx + 系统 Node（如 Node 22） | 127 |
+| 打包模式 | `ELECTRON_RUN_AS_NODE` 的 electron 二进制（Electron 33 = Node 20.18） | 130 |
+
+两者互不兼容，因此：
+- `server/node_modules` 里始终保留**系统 Node 版**，供开发使用，打包流程不会破坏它
+- `scripts/prepare-native-electron.js` 额外下载**Electron 版**到 `build/native/electron/<platform>-<arch>/`，用 `node-abi` 由 electron 版本推算 ABI，带 `meta.json` 做幂等；先试 GitHub Release，失败回退 npmmirror 镜像
+- `electron-builder.config.js` 的 `extraResources` 先用 filter 排除随包的 Node 版 `.node`（同时剔除 `deps/`、`src/` 约 10MB），再用 `${platform}-${arch}` 宏把 Electron 版覆盖进去
+- 所有 `dist*` / `pack` 命令已内置 `prepare:native` 步骤，无需手动执行
+- 升级 electron 或 better-sqlite3 版本后，`build/native/` 下的缓存会因 meta 不匹配自动重新下载
+- 若 ABI 不匹配，症状是打包后应用界面空白、后端子进程启动即退出，stderr 出现 `NODE_MODULE_VERSION` 不匹配
+
 **打包注意事项**：
 - 打包前务必关闭已运行的 SlowTrail 进程，否则 electron-builder 无法覆盖 `release/win-unpacked/SlowTrail.exe`（报 EBUSY 错误）
-- Windows 打包命令：`npm run dist:win`（内含 build:all + electron-builder --win）
+- Windows 打包命令：`npm run dist:win`（内含 build:all + prepare:native:win + electron-builder --win）
+- 打包机需要能访问 GitHub Release 或 npmmirror 以获取 Electron 版原生模块；完全离线时手动把对应 `.node` 放到 `build/native/electron/<platform>-<arch>/better_sqlite3.node`
 - 打包产物输出到 `release/` 目录：`.exe`（NSIS 安装器）、`.zip`（绿色版）、`.msi`
 - 如遇 `__msi-x64` 目录锁定问题，手动删除 `release/__msi-x64` 后重试
+- **MSI 为 per-machine 安装**（`msi.perMachine: true`）：装到 Program Files，安装时需要提权。electron-builder 默认的 per-user 安装会把包缓存进 `%AppData%\Microsoft\Installer` 并对其设 ACL，若该目录被安全策略或沙箱工具改成非继承 ACL（当前用户无写权限），安装会报 MSI 1926 `Could not set file security for file ... Error: 5`。此时的临时解法是改用 NSIS `.exe` 或 zip 绿色版，根治需管理员执行 `icacls "%AppData%\Microsoft\Installer" /reset` 恢复继承
+- **不要给 `msi` 配 `upgradeCode`**：未设置时 electron-builder 依据 `appId` 生成确定性 GUID，手动指定会让已发布版本的升级链断掉（新旧版本并存而非覆盖）
 - `build/` 目录需包含 `icon.png`（通用）和 `icon.ico`（Windows 托盘/安装器图标）
 
 ## Docker 部署
@@ -186,10 +210,11 @@ docker compose down -v
 ```
 
 **镜像说明**：
-- 基础镜像 `node:20-alpine`，生产镜像约 ~120MB
-- 多阶段构建：阶段 1 构建前端、阶段 2 编译后端 TypeScript、阶段 3 仅含运行时依赖
+- 基础镜像 `node:20-alpine`
+- 多阶段构建：阶段 1 构建前端、阶段 2 编译后端 TypeScript 并装配原生模块、阶段 3 仅含运行时产物
+- **原生模块处理**：better-sqlite3 官方提供 alpine（musl）预编译二进制，正常直接下载；阶段 2 仍装 `python3 make g++` 作为源码编译兜底，并在构建时执行一次 `require('better-sqlite3')` 自检，失败则构建中断。生产阶段直接复制阶段 2 `npm prune --omit=dev` 后的 `node_modules`，不重复安装
 - `NODE_ENV=production` 时后端自动托管前端静态资源，单端口 3000 提供完整服务
-- 数据卷 `/app/server/data` 持久化 SQLite 数据库文件
+- 数据卷 `/app/server/data` 持久化 SQLite 数据库文件。启用 WAL 后同目录会多出 `.db-wal` / `.db-shm`，**须挂载在支持文件锁与共享内存的本地卷上，不要用 NFS 等网络文件系统**
 - 环境变量通过 `-e` 或 `docker-compose.yml` 的 `environment` 传入
 
 ## 环境变量
@@ -255,8 +280,26 @@ docker compose down -v
 
 - **分层架构**：routes → services → providers/db
 - **生产模式**：`NODE_ENV=production` 时后端托管 `client/dist` 静态资源，支持 SPA 路由 fallback，单端口提供前后端服务
-- **数据库**：sql.js（WebAssembly 版 SQLite），内存运行 + 手动持久化到文件
-- **数据库迁移**：`runMigrations()` 在 `initDatabase()` 后执行，用 `PRAGMA table_info` 检测缺列后 `ALTER TABLE ADD COLUMN`，对 `sync_history` 做表重建以更新唯一约束
+- **数据库**：better-sqlite3（原生 SQLite），直接读写磁盘文件，内存占用与库体积无关
+- **数据库适配层（重要）**：`db/sqliteAdapter.ts` 的 `SqliteDatabase` 类对外提供与历史 sql.js 完全一致的调用形状，因此 services 层不感知底层驱动。修改适配层时必须保持以下语义，否则会静默破坏大量调用点：
+  - `exec()` 查询**无结果时返回外层空数组 `[]`**，不是 `[{ columns, values: [] }]` —— 全项目的 `result.length === 0` 判空都依赖这一点
+  - `values` 是 `unknown[][]` 二维数组，调用方按下标取值（最深用到 `row[10]`），故内部必须用 `raw(true)` 而非 better-sqlite3 默认的对象模式
+  - `columns` 取 SQL 里 `AS` 别名后的名字，且与 `values` 各行下标严格对齐（`statsService` 和 `fingerprintService` 靠它拼对象）
+  - 参数统一归一化：`undefined → null`、`boolean → 0/1`（better-sqlite3 会直接抛错拒绝，sql.js 则是隐式转换）
+  - `run()` 无参数时走底层 `exec`，以支持 DDL、`BEGIN/COMMIT/ROLLBACK` 和多条语句
+  - 内置预编译语句缓存（上限 200 条，执行 DDL 时清空）
+- **持久化**：写入即落盘，无需手动持久化。`saveDatabase()` 已退化为空实现，仅为兼容历史调用点保留，**新代码不应再调用**
+- **连接 PRAGMA**：`applyPragmas()` 设置 WAL、`synchronous=NORMAL`、64MB 页缓存、`temp_store=MEMORY`、256MB mmap、5 秒 `busy_timeout`。WAL 会在库文件旁产生 `.db-wal` / `.db-shm`，`closeDatabase()` 会做 `wal_checkpoint(TRUNCATE)` 收尾
+- **体积与压缩**：取体积用 `getDatabaseByteSize()`（`PRAGMA page_count × page_size`），不要用 `export()`（会一次性分配与库等大的内存）；删除大量数据或索引后文件不自动收缩，需调 `vacuumDatabase()`
+- **ANALYZE 不是可选优化**：没有 `sqlite_stat1`，规划器会假定各索引选择性相近，从而放弃覆盖索引退化为回表，实测慢一个数量级。`ensureQueryStatistics()` 在启动时按需执行（会比对统计信息是否覆盖当前索引、有无已删索引残留），`syncService` 在有新数据入库后调用 `analyzeDatabase()` 刷新。2GB 库上 ANALYZE 约 400ms
+- **查询编写约定（`slow_queries` 上尤其重要）**：该表单行平均含 7KB 的 `query_sql`，一旦回表就要读入大量页，因此
+  - **聚合里绝不能出现 `query_sql`**（如 `MIN(query_sql)`），否则覆盖索引失效，实测 119ms → 1.4s
+  - 需要返回 `query_sql` 的分页查询，先在子查询里只取本页 `id`，外层再按 id 精确回表（见 `getTopQueries` 与 `getFingerprintDetail` 的 `samplesSql`）
+  - 上述两段式写法一旦定型，**加列只能加在外层 `SELECT s.xxx` 上，不要动内层子查询** —— 内层要保持只走覆盖索引。实测外层由 10 列扩到 18 列并追加 `LEFT JOIN data_sources` 后耗时无变化（126ms → 128ms），因为回表行数只有本页那几行
+  - 新增筛选维度时优先复用覆盖索引已有的列；若必须引入新列，要么并入覆盖索引，要么接受回表代价
+  - 带 `LIMIT/OFFSET` 的排序必须补一个确定性次级键（如 `, fingerprint ASC` / `, id ASC`），否则排序值并列时取哪些行由扫描顺序决定，翻页会重复或遗漏
+- **事务与并发**：better-sqlite3 是单连接同步驱动，**禁止跨 `await` 持有事务** —— 那会把期间其它 HTTP 请求和定时任务的写入一起吞进本事务，回滚时连带丢掉。需要跨网络 IO 的写入（如 `syncService`）按批提交，失败时用业务补偿清理
+- **数据库迁移**：`runMigrations()` 在 `initDatabase()` 中执行，用 `PRAGMA table_info` 检测缺列后 `ALTER TABLE ADD COLUMN`，对 `sync_history` 做表重建以更新唯一约束
 - **时间处理**：全链路使用毫秒时间戳（number 类型）
 - **API 响应格式**：统一返回 `{ success: boolean, data?: T, error?: string }`
 - **错误处理**：try-catch + 统一格式返回，错误日志输出到控制台
@@ -272,6 +315,8 @@ docker compose down -v
 - **数据源管理**：前端按类型定制表单，通过 `formRegistry.ts` 注册表扩展，实例输入按 `capabilities.instanceEnumeration` 自动降级为文本框
 - **图表**：Recharts 库进行数据可视化
 - **SQL 展示**：`sql-formatter` + `react-syntax-highlighter`，封装为 `SQLBlock`
+- **明细字段展示分层**：指纹详情的样例行（`FingerprintDetailPanel`）只放高频字段（耗时/锁等待/扫描行/返回行/库/实例/用户/时间），完整的 17 个行级字段在 `SqlDetailModal` 的「记录信息」网格里展示。`SqlModalData` 已统一为 api 层的 `SlowQuerySample`（snake_case，与表字段同名），不要再在各页面重复定义局部形状
+- **可空字段渲染**：`components/fingerprints/utils.ts` 提供 `formatTimeOrDash` / `formatCount` / `formatText`，统一把 null、undefined、空串渲染为 `-`。ES 文档缺字段时归一化结果为 null，直接 `toLocaleString()` 会抛错
 - **样式**：Tailwind CSS 4（`@tailwindcss/vite` 插件），全部 utility classes
 
 ### 编码规范
@@ -306,13 +351,13 @@ docker compose down -v
 | `/api/sync/data` | DELETE | 清空本地数据（query: startTime?, endTime?） |
 | `/api/sync/record` | DELETE | 按同步记录删除（query: dataSourceId, instanceName, syncDate） |
 | `/api/stats/overview` | GET | 统计概览（query: startTime, endTime, dbName, instanceName, compareStartTime, compareEndTime） |
-| `/api/stats/top-queries` | GET | TOP N 慢查询（额外 query: limit, offset, sortBy） |
+| `/api/stats/top-queries` | GET | TOP N 慢查询（额外 query: limit, offset, sortBy）；返回 `slow_queries` 全部行级字段 + `data_source_name` |
 | `/api/stats/trends` | GET | 趋势数据（额外 query: granularity, fingerprint, tzOffset） |
 | `/api/stats/distribution` | GET | 分布统计 |
 | `/api/stats/heatmap` | GET | 7×24 热力图数据（额外 query: tzOffset） |
 | `/api/stats/filter-options` | GET | 筛选选项（dbNames, instanceNames） |
 | `/api/fingerprints` | GET | SQL 指纹归类列表 |
-| `/api/fingerprints/detail` | GET | 指纹详情 |
+| `/api/fingerprints/detail` | GET | 指纹详情；`samples` 返回 `slow_queries` 全部行级字段 + `data_source_name`，统计含 `avgRowsSent` / `totalQueryTime` |
 | `/api/fingerprint-groups` | GET | 所有指纹分类列表 |
 | `/api/fingerprint-groups` | POST | 创建指纹分类 |
 | `/api/fingerprint-groups/similar` | GET | 相似指纹推荐 |
@@ -358,7 +403,19 @@ docker compose down -v
 | data_source_id | INTEGER | 数据源 ID |
 | sync_date | TEXT | 同步数据日期 YYYY-MM-DD |
 
-索引：fingerprint, timestamp, db_name, instance_name, (data_source_id, instance_name, sync_date)
+索引：
+
+| 索引 | 列 | 用途 |
+|------|-----|------|
+| `idx_sq_ts_cover` | timestamp, fingerprint, query_time, lock_time, rows_examined, rows_sent, db_name, instance_name | 按时间筛选的聚合（overview / trends / distribution / heatmap），覆盖索引 |
+| `idx_sq_fp_cover` | fingerprint, timestamp, query_time, lock_time, rows_examined, db_name, instance_name | 按指纹分组的聚合与指纹详情，覆盖索引 |
+| `idx_timestamp` | timestamp | 轻量计数与部分小查询，体积仅 3MB |
+| `idx_sq_ds_inst_date` | data_source_id, instance_name, sync_date | 同步去重与按同步记录删除 |
+
+**已刻意移除、不要加回的索引**：`idx_fingerprint(fingerprint)`、`idx_db_name(db_name)`、`idx_instance_name(instance_name)`。
+前者被 `idx_sq_fp_cover` 的最左前缀完全覆盖；后两者存在时会让 SQLite 为了给 `GROUP BY db_name`
+省一次排序而选中它们，然后逐行回表校验 timestamp —— 实测 distribution 因此从 128ms 退化到 1321ms。
+定义见 `db/index.ts` 的 `ANALYTICS_INDEXES` 与 `OBSOLETE_INDEXES`，迁移会自动比对列构成并重建。
 
 ### sync_history 表
 
@@ -403,4 +460,7 @@ docker compose down -v
 - 支持 Electron 桌面打包（Windows/macOS/Linux 安装包），打包前需在 `build/` 目录放置对应平台图标
 - 支持 Docker 部署，Dockerfile 采用多阶段构建，docker-compose.yml 提供快速启动方案
 - Electron 打包产物输出到 `release/` 目录（已加入 .gitignore）
-- sql.js 数据库文件 `server/data/slow_queries.db` 不应提交到版本库（已在 .gitkeep 中保留目录）
+- 数据库文件 `server/data/slow_queries.db` 及其 `.db-wal` / `.db-shm` 不应提交到版本库（已在 .gitkeep 中保留目录）
+- `build/native/` 下的原生模块二进制是构建缓存，不应提交到版本库
+- **数据体积**：`slow_queries.query_sql` 存原始 SQL 全文，实测平均约 7KB/条，是数据库体积的主要来源（21 万条约占 1.5GB）。两个覆盖索引合计约占库体积的 9%（21 万行时约 190MB），换来大范围聚合查询提速约 90%
+- **模糊搜索仍是慢路径**：指纹列表的 `search` 参数会生成 `query_sql LIKE '%关键词%'`，无法用索引，必须读遍全部 SQL 文本。实测 21 万行规模下即使零命中也需约 4 秒。要根治需引入 FTS5 全文索引，属独立改动

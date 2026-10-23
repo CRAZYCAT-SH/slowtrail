@@ -14,6 +14,12 @@ release/
 server/data/*.db
 server/data/*.db.bak
 *.db
+# SQLite WAL 模式的附属文件
+*.db-wal
+*.db-shm
+
+# 原生模块构建缓存（Electron ABI 版 better-sqlite3，由 scripts/prepare-native-electron.js 生成）
+build/native/
 
 # 环境变量
 .env

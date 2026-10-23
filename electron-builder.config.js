@@ -33,7 +33,22 @@ module.exports = {
     {
       from: 'server/node_modules',
       to: 'server/node_modules',
-      filter: ['**/*'],
+      filter: [
+        '**/*',
+        // better-sqlite3 是原生模块，随包的 .node 是「系统 Node ABI」版（开发用），
+        // 在 Electron 里加载会因 ABI 不匹配失败，这里排除掉，由下面一条换成 Electron ABI 版
+        '!better-sqlite3/build/Release/better_sqlite3.node',
+        // 运行时不需要 SQLite 源码和编译中间产物，剔除约 10MB
+        '!better-sqlite3/deps/**',
+        '!better-sqlite3/src/**',
+        '!better-sqlite3/build/Release/obj/**',
+        '!better-sqlite3/build/*.{mk,gypi,Makefile,vcxproj,vcxproj.filters,sln}',
+      ],
+    },
+    // Electron ABI 版的原生模块，由 scripts/prepare-native-electron.js 预先下载
+    {
+      from: 'build/native/electron/${platform}-${arch}/better_sqlite3.node',
+      to: 'server/node_modules/better-sqlite3/build/Release/better_sqlite3.node',
     },
     {
       from: 'server/package.json',
@@ -85,6 +100,22 @@ module.exports = {
     createStartMenuShortcut: true,
     shortcutName: 'SlowTrail',
     artifactName: 'SlowTrail-Setup-${version}.${ext}',
+  },
+
+  // MSI 安装器配置
+  // 注意：不要设置 upgradeCode。未设置时 electron-builder 会依据 appId 生成确定性 GUID，
+  // 手动指定会让已发布版本的升级链断掉（旧版不会被覆盖，而是并存两份）
+  msi: {
+    // 走 per-machine 安装（装到 Program Files，需要提权）。
+    // 默认的 per-user 安装会把安装包缓存进 %AppData%\Microsoft\Installer 并对其设 ACL，
+    // 在用户 profile 权限被安全策略/沙箱工具改坏的机器上会报 MSI 1926 / Error 5
+    perMachine: true,
+    // 显示安装向导，而不是静默安装（静默模式失败时用户看不到任何反馈）
+    oneClick: false,
+    createDesktopShortcut: true,
+    createStartMenuShortcut: true,
+    shortcutName: 'SlowTrail',
+    runAfterFinish: true,
   },
 
   // macOS 配置

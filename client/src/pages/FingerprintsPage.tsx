@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 import { fingerprintApi, groupApi } from '../api';
-import type { FingerprintItem, FingerprintDetail, GroupedFingerprintItem, SimilarFingerprintItem, FingerprintGroup, GroupDetailResult } from '../api';
+import type { FingerprintItem, FingerprintDetail, GroupedFingerprintItem, SimilarFingerprintItem, FingerprintGroup, GroupDetailResult, SlowQuerySample } from '../api';
 import { useQueryParams } from '../hooks/useQueryParams';
 import { useDateRange } from '../contexts/DateRangeContext';
 import Button from '../components/Button';
@@ -13,14 +13,6 @@ import {
   SqlDetailModal,
   formatTime,
 } from '../components/fingerprints';
-
-/** 模态框中展示的 SQL 信息 */
-interface SqlModalData {
-  sql: string;
-  queryTime: number;
-  rowsExamined: number;
-  timestamp: number;
-}
 
 export default function FingerprintsPage() {
   const { startTime: sharedStartTime, endTime: sharedEndTime, setRange, dbName, instanceName } = useDateRange();
@@ -92,7 +84,7 @@ export default function FingerprintsPage() {
   const [trendGranularity, setTrendGranularity] = useState<'minute' | 'hour' | 'day' | undefined>(undefined);
 
   // 模态框
-  const [sqlModal, setSqlModal] = useState<SqlModalData | null>(null);
+  const [sqlModal, setSqlModal] = useState<SlowQuerySample | null>(null);
 
   // 归类操作
   const [classifyingFp, setClassifyingFp] = useState<string | null>(null);
@@ -463,10 +455,13 @@ export default function FingerprintsPage() {
             <thead>
               <tr>
                 <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 w-10 text-center">#</th>
-                <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 w-[45%]">SQL 指纹</th>
+                <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 w-[30%]">SQL 指纹</th>
                 <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 cursor-pointer select-none whitespace-nowrap hover:bg-gray-100" onClick={() => handleSort('count')}>频次 {getSortIcon('count')}</th>
+                <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 cursor-pointer select-none whitespace-nowrap hover:bg-gray-100" onClick={() => handleSort('total_time')}>总耗时 {getSortIcon('total_time')}</th>
                 <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 cursor-pointer select-none whitespace-nowrap hover:bg-gray-100" onClick={() => handleSort('avg_time')}>平均耗时 {getSortIcon('avg_time')}</th>
                 <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 cursor-pointer select-none whitespace-nowrap hover:bg-gray-100" onClick={() => handleSort('max_time')}>最大耗时 {getSortIcon('max_time')}</th>
+                <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 cursor-pointer select-none whitespace-nowrap hover:bg-gray-100" onClick={() => handleSort('min_time')}>最小耗时 {getSortIcon('min_time')}</th>
+                <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 cursor-pointer select-none whitespace-nowrap hover:bg-gray-100" onClick={() => handleSort('avg_lock')}>平均锁等待 {getSortIcon('avg_lock')}</th>
                 <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 cursor-pointer select-none whitespace-nowrap hover:bg-gray-100" onClick={() => handleSort('avg_rows')}>平均扫描行 {getSortIcon('avg_rows')}</th>
                 <th className="px-3 py-3 text-center text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 w-16">操作</th>
               </tr>
@@ -488,8 +483,11 @@ export default function FingerprintsPage() {
                       <code className="font-mono text-xs text-gray-700 line-clamp-3 break-all leading-relaxed">{item.fingerprint}</code>
                     </td>
                     <td className={`px-3 py-3 font-mono text-sm whitespace-nowrap ${item.count >= 100 ? 'text-orange-600 font-semibold' : ''}`}>{item.count}</td>
+                    <td className="px-3 py-3 font-mono text-sm whitespace-nowrap">{formatTime(item.totalQueryTime)}</td>
                     <td className="px-3 py-3 font-mono text-sm whitespace-nowrap">{formatTime(item.avgQueryTime)}</td>
                     <td className={`px-3 py-3 font-mono text-sm whitespace-nowrap ${item.maxQueryTime >= 5 ? 'text-red-600 font-semibold' : ''}`}>{formatTime(item.maxQueryTime)}</td>
+                    <td className="px-3 py-3 font-mono text-sm whitespace-nowrap">{formatTime(item.minQueryTime)}</td>
+                    <td className="px-3 py-3 font-mono text-sm whitespace-nowrap">{formatTime(item.avgLockTime)}</td>
                     <td className="px-3 py-3 font-mono text-sm whitespace-nowrap">{Math.round(item.avgRowsExamined).toLocaleString()}</td>
                     <td className="px-3 py-3 text-center">
                       {classifiedFingerprints.has(item.fingerprint) ? (
@@ -501,7 +499,7 @@ export default function FingerprintsPage() {
                   </tr>
                   {expandedFp === item.fingerprint && (
                     <tr key={item.fingerprint + '-detail'}>
-                      <td colSpan={7} className="p-0 bg-gray-50 max-w-0 overflow-hidden">
+                      <td colSpan={10} className="p-0 bg-gray-50 max-w-0 overflow-hidden">
                         {detail && <FingerprintDetailPanel detail={detail} fingerprint={item.fingerprint} startTime={startTime} endTime={endTime} detailLoading={detailLoading} samplesPage={samplesPage} samplesPageSize={samplesPageSize} onChangeTrendGranularity={changeTrendGranularity} onLoadSamplesPage={loadSamplesPage} onShowSqlModal={setSqlModal} />}
                         {detailLoading && !detail && <div className="py-5 text-center text-gray-400">加载详情中...</div>}
                       </td>
@@ -531,10 +529,13 @@ export default function FingerprintsPage() {
             <thead>
               <tr>
                 <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 w-10 text-center">#</th>
-                <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 w-[45%]">分类 / 指纹</th>
+                <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 w-[30%]">分类 / 指纹</th>
                 <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 cursor-pointer select-none whitespace-nowrap hover:bg-gray-100" onClick={() => handleSort('count')}>频次 {getSortIcon('count')}</th>
+                <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 cursor-pointer select-none whitespace-nowrap hover:bg-gray-100" onClick={() => handleSort('total_time')}>总耗时 {getSortIcon('total_time')}</th>
                 <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 cursor-pointer select-none whitespace-nowrap hover:bg-gray-100" onClick={() => handleSort('avg_time')}>平均耗时 {getSortIcon('avg_time')}</th>
                 <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 cursor-pointer select-none whitespace-nowrap hover:bg-gray-100" onClick={() => handleSort('max_time')}>最大耗时 {getSortIcon('max_time')}</th>
+                <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 cursor-pointer select-none whitespace-nowrap hover:bg-gray-100" onClick={() => handleSort('min_time')}>最小耗时 {getSortIcon('min_time')}</th>
+                <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 cursor-pointer select-none whitespace-nowrap hover:bg-gray-100" onClick={() => handleSort('avg_lock')}>平均锁等待 {getSortIcon('avg_lock')}</th>
                 <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 cursor-pointer select-none whitespace-nowrap hover:bg-gray-100" onClick={() => handleSort('avg_rows')}>平均扫描行 {getSortIcon('avg_rows')}</th>
                 <th className="px-3 py-3 text-center text-xs font-semibold text-gray-500 bg-gray-50 sticky top-0 w-20">操作</th>
               </tr>
@@ -569,8 +570,11 @@ export default function FingerprintsPage() {
                       )}
                     </td>
                     <td className={`px-3 py-3 font-mono text-sm whitespace-nowrap ${item.count >= 100 ? 'text-orange-600 font-semibold' : ''}`}>{item.count}</td>
+                    <td className="px-3 py-3 font-mono text-sm whitespace-nowrap">{formatTime(item.totalQueryTime)}</td>
                     <td className="px-3 py-3 font-mono text-sm whitespace-nowrap">{formatTime(item.avgQueryTime)}</td>
                     <td className={`px-3 py-3 font-mono text-sm whitespace-nowrap ${item.maxQueryTime >= 5 ? 'text-red-600 font-semibold' : ''}`}>{formatTime(item.maxQueryTime)}</td>
+                    <td className="px-3 py-3 font-mono text-sm whitespace-nowrap">{formatTime(item.minQueryTime)}</td>
+                    <td className="px-3 py-3 font-mono text-sm whitespace-nowrap">{formatTime(item.avgLockTime)}</td>
                     <td className="px-3 py-3 font-mono text-sm whitespace-nowrap">{Math.round(item.avgRowsExamined).toLocaleString()}</td>
                     <td className="px-3 py-3 text-center">
                       {item.groupId && (
@@ -583,7 +587,7 @@ export default function FingerprintsPage() {
                   </tr>
                   {expandedFp === item.fingerprint && (
                     <tr key={(item.groupId ? `g-${item.groupId}` : item.fingerprint) + '-detail'}>
-                      <td colSpan={7} className="p-0 bg-gray-50 max-w-0 overflow-hidden">
+                      <td colSpan={10} className="p-0 bg-gray-50 max-w-0 overflow-hidden">
                         {groupDetail && <GroupDetailPanel groupDetail={groupDetail} groupId={item.groupId!} startTime={startTime} endTime={endTime} detailLoading={detailLoading} onChangeTrendGranularity={changeGroupTrendGranularity} onShowSqlModal={setSqlModal} />}
                         {detailLoading && !groupDetail && <div className="py-5 text-center text-gray-400">加载详情中...</div>}
                       </td>

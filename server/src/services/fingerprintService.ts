@@ -12,8 +12,33 @@ export interface FingerprintItem {
   minQueryTime: number;
   avgRowsExamined: number;
   avgLockTime: number;
-  sampleSql: string;
   totalQueryTime: number;
+}
+
+/**
+ * 慢查询原始记录（指纹详情里的样例行）
+ * 字段与 slow_queries 表一一对应，data_source_name 由 LEFT JOIN data_sources 取得
+ * 可空字段用 null：ES 文档里对应字段缺失时归一化后就是 null
+ */
+export interface SlowQuerySample {
+  id: number;
+  query_sql: string;
+  fingerprint: string;
+  query_time: number;
+  lock_time: number | null;
+  rows_examined: number | null;
+  rows_sent: number | null;
+  db_name: string | null;
+  instance_name: string | null;
+  instance_id: string | null;
+  node_id: string | null;
+  user_name: string | null;
+  user_host: string | null;
+  timestamp: number;
+  es_index: string | null;
+  data_source_id: number | null;
+  data_source_name: string | null;
+  sync_date: string | null;
 }
 
 /**
@@ -27,15 +52,13 @@ export interface FingerprintDetail {
   minQueryTime: number;
   avgRowsExamined: number;
   avgLockTime: number;
+  /** rows_sent 全为空时 AVG 结果为 null */
+  avgRowsSent: number | null;
+  totalQueryTime: number;
   databases: string[];
   instances: string[];
   samplesTotal: number;
-  samples: Array<{
-    query_sql: string;
-    query_time: number;
-    rows_examined: number;
-    timestamp: number;
-  }>;
+  samples: SlowQuerySample[];
   timeTrend: Array<{
     time: number;
     count: number;
@@ -107,11 +130,15 @@ export function getFingerprints(
     count: 'count',
     avg_time: 'avgQueryTime',
     max_time: 'maxQueryTime',
+    min_time: 'minQueryTime',
     avg_rows: 'avgRowsExamined',
+    avg_lock: 'avgLockTime',
     total_time: 'totalQueryTime',
   };
   const sortField = sortFieldMap[sortBy] || 'count';
   const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
+  // 排序值并列时（如多个指纹 count 相同）需要一个确定的次级键，
+  // 否则取哪些行由扫描顺序决定，翻页时可能重复或遗漏
 
   // 查询总数（不同指纹的数量）
   const countSql = `SELECT COUNT(DISTINCT fingerprint) FROM slow_queries ${searchWhere}`;
@@ -119,6 +146,11 @@ export function getFingerprints(
   const total = countResult.length > 0 ? (countResult[0].values[0][0] as number) : 0;
 
   // 聚合查询
+  //
+  // 刻意不在这里取样例 SQL：query_sql 平均约 7KB，一旦聚合里出现 MIN(query_sql)，
+  // 就必须为范围内每一行回表读取大字段，idx_sq_fp_cover 的覆盖效果失效，
+  // 实测在 20 万行规模上从 119ms 退化到 1.4 秒。
+  // 指纹视图前端展示的是 fingerprint 本身，并不需要样例 SQL。
   const dataSql = `
     SELECT 
       fingerprint,
@@ -128,11 +160,10 @@ export function getFingerprints(
       ROUND(MIN(query_time), 3) as minQueryTime,
       ROUND(AVG(rows_examined), 0) as avgRowsExamined,
       ROUND(AVG(lock_time), 3) as avgLockTime,
-      MIN(query_sql) as sampleSql,
       ROUND(SUM(query_time), 3) as totalQueryTime
     FROM slow_queries ${searchWhere}
     GROUP BY fingerprint
-    ORDER BY ${sortField} ${sortOrder}
+    ORDER BY ${sortField} ${sortOrder}, fingerprint ASC
     LIMIT ? OFFSET ?
   `;
 
@@ -183,7 +214,9 @@ export function getFingerprintDetail(
       ROUND(MAX(query_time), 3) as maxQueryTime,
       ROUND(MIN(query_time), 3) as minQueryTime,
       ROUND(AVG(rows_examined), 0) as avgRowsExamined,
-      ROUND(AVG(lock_time), 3) as avgLockTime
+      ROUND(AVG(lock_time), 3) as avgLockTime,
+      ROUND(AVG(rows_sent), 0) as avgRowsSent,
+      ROUND(SUM(query_time), 3) as totalQueryTime
     FROM slow_queries ${fpWhere}
   `;
   const statsResult = db.exec(statsSql, fpParams);
@@ -194,20 +227,39 @@ export function getFingerprintDetail(
   const statsRow = statsResult[0].values[0];
 
   // 原始 SQL（支持分页）
+  // 返回 slow_queries 的全部行级字段，前端样例列表与 SQL 详情弹窗据此展示完整信息。
+  // fpWhere 已把范围收窄到单个指纹 + 时间区间，且每页只取 10 条，
+  // 多带几列的回表成本可忽略（本来 query_sql 就已经要回表）。
+  // 内层的 fpWhere/ORDER BY 走 idx_sq_fp_cover，LEFT JOIN 只对本页这几行生效。
+  // 列名用显式 AS 固定，下面按 columns 与取值下标对齐拼装对象。
   const samplesSql = `
-    SELECT query_sql, query_time, rows_examined, timestamp
-    FROM slow_queries ${fpWhere}
-    ORDER BY query_time DESC
-    LIMIT ? OFFSET ?
+    SELECT s.id AS id, s.query_sql AS query_sql, s.fingerprint AS fingerprint,
+           s.query_time AS query_time, s.lock_time AS lock_time,
+           s.rows_examined AS rows_examined, s.rows_sent AS rows_sent,
+           s.db_name AS db_name, s.instance_name AS instance_name,
+           s.instance_id AS instance_id, s.node_id AS node_id,
+           s.user_name AS user_name, s.user_host AS user_host,
+           s.timestamp AS timestamp, s.es_index AS es_index,
+           s.data_source_id AS data_source_id, ds.name AS data_source_name,
+           s.sync_date AS sync_date
+    FROM slow_queries s
+    LEFT JOIN data_sources ds ON ds.id = s.data_source_id
+    WHERE s.id IN (
+      SELECT id FROM slow_queries ${fpWhere}
+      ORDER BY query_time DESC, id ASC
+      LIMIT ? OFFSET ?
+    )
+    ORDER BY s.query_time DESC, s.id ASC
   `;
   const samplesResult = db.exec(samplesSql, [...fpParams, samplesLimit, samplesOffset]);
-  const samples = samplesResult.length > 0
-    ? samplesResult[0].values.map((row) => ({
-        query_sql: row[0] as string,
-        query_time: row[1] as number,
-        rows_examined: row[2] as number,
-        timestamp: row[3] as number,
-      }))
+  const samples: SlowQuerySample[] = samplesResult.length > 0
+    ? samplesResult[0].values.map((row) => {
+        const record: Record<string, unknown> = {};
+        samplesResult[0].columns.forEach((col, i) => {
+          record[col] = row[i];
+        });
+        return record as unknown as SlowQuerySample;
+      })
     : [];
 
   // 时间趋势：支持 minute/hour/day 三种粒度
@@ -285,6 +337,8 @@ export function getFingerprintDetail(
     minQueryTime: statsRow[3] as number,
     avgRowsExamined: statsRow[4] as number,
     avgLockTime: statsRow[5] as number,
+    avgRowsSent: statsRow[6] as number | null,
+    totalQueryTime: statsRow[7] as number,
     databases,
     instances,
     samplesTotal: statsRow[0] as number,
@@ -377,7 +431,9 @@ export function getGroupedFingerprints(
     count: 'count',
     avg_time: 'avgQueryTime',
     max_time: 'maxQueryTime',
+    min_time: 'minQueryTime',
     avg_rows: 'avgRowsExamined',
+    avg_lock: 'avgLockTime',
     total_time: 'totalQueryTime',
   };
   const sortField = sortFieldMap[sortBy] || 'count';

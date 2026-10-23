@@ -10,6 +10,15 @@ client/dist
 # 数据文件
 server/data/*.db
 server/data/*.db.bak
+server/data/*.db-wal
+server/data/*.db-shm
+
+# Electron 打包相关（Docker 镜像不需要）
+release
+electron
+electron/dist
+build/native
+scripts
 
 # 开发配置
 .env

@@ -106,7 +106,7 @@ npm run dev
 | 层级 | 技术 |
 |------|------|
 | 前端 | React 19 + TypeScript + Vite + Tailwind CSS 4 + Recharts |
-| 后端 | Node.js + Express + sql.js (SQLite) |
+| 后端 | Node.js + Express + better-sqlite3 (SQLite) |
 | 桌面 | Electron 33 + electron-builder |
 | 容器 | Docker (多阶段构建) |
 

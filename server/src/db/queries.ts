@@ -1,4 +1,4 @@
-import { getDatabase, saveDatabase } from './index';
+import { getDatabase, saveDatabase, getDatabaseByteSize } from './index';
 
 /**
  * 慢查询记录接口（新结构，含 data_source_id 和 sync_date）
@@ -57,10 +57,13 @@ export function insertSlowQueries(records: SlowQueryRecord[], inTransaction: boo
     db.run('BEGIN TRANSACTION');
   }
 
+  // 复用一个预编译语句，避免每条记录都 prepare/finalize
+  const stmt = db.prepare(insertSQL);
+
   try {
     let insertedCount = 0;
     for (const record of records) {
-      db.run(insertSQL, [
+      stmt.run([
         record.query_sql,
         record.fingerprint,
         record.query_time,
@@ -81,11 +84,14 @@ export function insertSlowQueries(records: SlowQueryRecord[], inTransaction: boo
       insertedCount++;
     }
 
+    stmt.free();
+
     if (!inTransaction) {
       db.run('COMMIT');
     }
     return insertedCount;
   } catch (error) {
+    stmt.free();
     if (!inTransaction) {
       db.run('ROLLBACK');
     }
@@ -256,9 +262,8 @@ export function getDatabaseStats(): { totalRecords: number; dbSize: string } {
   const result = db.exec('SELECT COUNT(*) FROM slow_queries');
   const totalRecords = result.length > 0 ? (result[0].values[0][0] as number) : 0;
 
-  // 获取数据库文件大小
-  const data = db.export();
-  const sizeInMB = (data.length / (1024 * 1024)).toFixed(2);
+  // 用 PRAGMA 计算体积，不能用 db.export()：那会复制一份完整的库到内存
+  const sizeInMB = (getDatabaseByteSize() / (1024 * 1024)).toFixed(2);
 
   return { totalRecords, dbSize: `${sizeInMB} MB` };
 }

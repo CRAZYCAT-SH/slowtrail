@@ -7,7 +7,7 @@ import { getProvider } from '../providers/index';
 import { NormalizedSlowQuery } from '../providers/types';
 import { getDataSourceRaw, getDefaultDataSource } from './dataSourceService';
 import { insertSlowQueries, isDateSynced, addSyncRecord, clearDataBySyncRecord, SlowQueryRecord } from '../db/queries';
-import { getDatabase, saveDatabase } from '../db/index';
+import { analyzeDatabase } from '../db/index';
 
 // 动态导入 sql-fingerprint（ESM 包，CommonJS 环境需要 dynamic import）
 let fingerprintFn: ((sql: string, matchMD5?: boolean, matchEmbedded?: boolean) => string) | null = null;
@@ -178,10 +178,12 @@ export async function syncFromDataSource(params: SyncParams): Promise<SyncResult
       let dayCount = 0;
       let sourceRef = '';
 
-      // 开启事务（一天的数据在一个事务内）
-      const db = getDatabase();
-      db.run('BEGIN TRANSACTION');
-
+      // 按批提交，每批一个独立事务
+      //
+      // 这里刻意不把一整天包在单个事务里：拉取过程要 await 网络 IO，
+      // 而 better-sqlite3 是单连接同步驱动，跨 await 持有事务会把这期间
+      // 其它 HTTP 请求和定时任务的写入一起吞进本事务，回滚时会连带丢掉。
+      // 代价是单日不再原子，改用下面的失败补偿来保证「该天要么完整入库、要么不留残留」。
       try {
         // 逐批消费 provider 产出
         for await (const batch of provider.fetchRecords(dsRecord.settings, {
@@ -196,14 +198,21 @@ export async function syncFromDataSource(params: SyncParams): Promise<SyncResult
             toSlowQueryRecord(r, dataSourceId!, date, sourceRef)
           );
 
-          // 批量入库（在已有事务内，不重新开事务）
-          insertSlowQueries(records, true);
+          // 每批自开事务提交，写入即落盘
+          insertSlowQueries(records, false);
           dayCount += records.length;
         }
-
-        db.run('COMMIT');
       } catch (batchError) {
-        db.run('ROLLBACK');
+        // 补偿：清理本次已写入的部分数据，避免留下不完整的一天
+        // 此时尚未写 sync_history，重试该日期时会重新完整拉取
+        if (dayCount > 0) {
+          try {
+            clearDataBySyncRecord(dataSourceId!, instanceName, date);
+            console.log(`[Sync] ${date} 拉取中断，已回滚该日已写入的 ${dayCount} 条`);
+          } catch (cleanupError) {
+            console.error(`[Sync] ${date} 清理不完整数据失败:`, (cleanupError as Error).message);
+          }
+        }
         throw batchError;
       }
 
@@ -226,8 +235,10 @@ export async function syncFromDataSource(params: SyncParams): Promise<SyncResult
     }
   }
 
-  // 全部完成后统一持久化
-  saveDatabase();
+  // 有新数据入库则刷新统计信息，让查询规划器按新的数据分布选择索引
+  if (result.totalRecords > 0) {
+    analyzeDatabase();
+  }
 
   console.log(
     `[Sync] 同步完成 - 总计: ${result.totalRecords} 条, ` +

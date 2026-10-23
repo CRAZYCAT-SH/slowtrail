@@ -259,12 +259,20 @@ export interface SlowQueryItem {
   query_sql: string;
   fingerprint: string;
   query_time: number;
-  lock_time: number;
-  rows_examined: number;
-  rows_sent: number;
-  db_name: string;
-  instance_name: string;
+  lock_time: number | null;
+  rows_examined: number | null;
+  rows_sent: number | null;
+  db_name: string | null;
+  instance_name: string | null;
+  instance_id: string | null;
+  node_id: string | null;
+  user_name: string | null;
+  user_host: string | null;
   timestamp: number;
+  es_index: string | null;
+  data_source_id: number | null;
+  data_source_name: string | null;
+  sync_date: string | null;
 }
 
 export interface TrendPoint {
@@ -299,6 +307,8 @@ export const statsApi = {
 };
 
 // 指纹相关
+// 说明：指纹视图展示的是 fingerprint 本身，不含 sampleSql —— 后端为此省掉了
+// 对 7KB 级 query_sql 字段的聚合。分类视图的 GroupedFingerprintItem 仍带 sampleSql
 export interface FingerprintItem {
   fingerprint: string;
   count: number;
@@ -307,8 +317,32 @@ export interface FingerprintItem {
   minQueryTime: number;
   avgRowsExamined: number;
   avgLockTime: number;
-  sampleSql: string;
   totalQueryTime: number;
+}
+
+/**
+ * 慢查询原始记录（指纹详情里的样例行）
+ * 字段与 slow_queries 表一一对应；data_source_name 由后端 JOIN data_sources 得出
+ */
+export interface SlowQuerySample {
+  id: number;
+  query_sql: string;
+  fingerprint: string;
+  query_time: number;
+  lock_time: number | null;
+  rows_examined: number | null;
+  rows_sent: number | null;
+  db_name: string | null;
+  instance_name: string | null;
+  instance_id: string | null;
+  node_id: string | null;
+  user_name: string | null;
+  user_host: string | null;
+  timestamp: number;
+  es_index: string | null;
+  data_source_id: number | null;
+  data_source_name: string | null;
+  sync_date: string | null;
 }
 
 export interface FingerprintDetail {
@@ -319,15 +353,13 @@ export interface FingerprintDetail {
   minQueryTime: number;
   avgRowsExamined: number;
   avgLockTime: number;
+  /** rows_sent 全为空时 AVG 结果为 null */
+  avgRowsSent: number | null;
+  totalQueryTime: number;
   databases: string[];
   instances: string[];
   samplesTotal: number;
-  samples: Array<{
-    query_sql: string;
-    query_time: number;
-    rows_examined: number;
-    timestamp: number;
-  }>;
+  samples: SlowQuerySample[];
   timeTrend: Array<{
     time: number;
     count: number;
